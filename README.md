@@ -136,7 +136,7 @@ All providers use the OpenAI-compatible protocol and can be pointed to a local v
 
 ## Dataset
 
-For reproducibility, we release a 500-case demo subset ([`data_500/`](data_500/)) of the full RareBench used in our experiments. See [`data_500/README.md`](data_500/README.md) for format details.
+For reproducibility, we release a 500-case demo subset ([`data_500/`](data_500/)) of the full RarelensBench used in our experiments. See [`data_500/README.md`](data_500/README.md) for format details.
 
 ## Reproduction Instructions
 
