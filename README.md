@@ -21,12 +21,40 @@ For the full end-to-end clinical pipeline, we strongly recommend using our pre-d
 ## Demo
 
 ---
-
-
-|                                                                                                                                                                                                                                                                                |                                                                                                                                                                                                                                                                                |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ![RareAlert demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareAlert.gif)RareAlertScreens patient history and physical examination at the initial visit to flag potential rare-disease cases early and reduce diagnostic delays.           | ![RareDiagnosis demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareDiagnosis.gif)RareDiagnosisGenerates diagnostic hypotheses, recommends additional investigations, and refines final and differential diagnoses after workup completion. |
-| ![RareTreatment demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareTreatment.gif)RareTreatmentProvides evidence-based treatment plans with goals, interventions, implementation details, clinical significance, and safety considerations. | ![RarePrognosis demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RarePrognosis.gif)RarePrognosisModels disease progression and long-term prognosis to support patient communication, follow-up planning, and care coordination.              |
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img width="100%" alt="RareAlert demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareAlert.gif" />
+      <h3 align="center">RareAlert</h3>
+      <p align="left">
+        Screens patient history and physical examination at the initial visit to flag potential rare-disease cases early and reduce diagnostic delays.
+      </p>
+    </td>
+    <td width="50%" valign="top">
+      <img width="100%" alt="RareDiagnosis demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareDiagnosis.gif" />
+      <h3 align="center">RareDiagnosis</h3>
+      <p align="left">
+        Generates diagnostic hypotheses, recommends additional investigations, and refines final and differential diagnoses after workup completion.
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img width="100%" alt="RareTreatment demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareTreatment.gif" />
+      <h3 align="center">RareTreatment</h3>
+      <p align="left">
+        Provides evidence-based treatment plans with goals, interventions, implementation details, clinical significance, and safety considerations.
+      </p>
+    </td>
+    <td width="50%" valign="top">
+      <img width="100%" alt="RarePrognosis demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RarePrognosis.gif" />
+      <h3 align="center">RarePrognosis</h3>
+      <p align="left">
+        Models disease progression and long-term prognosis to support patient communication, follow-up planning, and care coordination.
+      </p>
+    </td>
+  </tr>
+</table>
 
 
 
@@ -94,11 +122,13 @@ Endpoints can be configured with `--base-url`, `--api-key`, and `--model`, or th
    python -m venv .venv
   ```
    Activate it with `source .venv/bin/activate` on Linux/macOS, or `. .\.venv\Scripts\Activate.ps1` in Windows PowerShell.
+
 3. **(Optional) Install CUDA PyTorch** for GPU-accelerated feature engineering:
   ```bash
    python -m pip install "torch==2.7.1" --index-url https://download.pytorch.org/whl/cu118
   ```
    Skip this step for a CPU-only installation.
+
 4. **Install dependencies:**
   ```bash
    python -m pip install --upgrade pip
@@ -121,9 +151,7 @@ Endpoints can be configured with `--base-url`, `--api-key`, and `--model`, or th
 For reproducibility, we release a 500-case demo subset (`[data_500/](data_500/)`) of the full RarelensBench used in our experiments. See `[data_500/README.md](data_500/README.md)` for format details.
 
 ## Code Demo
-
 ---
-
 A 500-case subset of RareLensBench is provided in `[data_500/](data_500/)` for small-scale testing and reproducibility checks.
 
 For module-specific execution instructions, see:
