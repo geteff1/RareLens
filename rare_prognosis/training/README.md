@@ -7,17 +7,18 @@ We provide the training pipeline for rare disease prognosis prediction, covering
 ## Pipeline
 
 ```
-Step 0: Data Preparation       →  S1 CSVs, model directories, train/test splits
-Step 1: Feature Engineering    →  features.{train,test}.csv per sub-task
-Step 2: Training               →  GBDT stacking models (.pkl)
-Step 3: Inference              →  Predictions written to S1 CSVs
+Step 1: LLM Generation       →  prognosis_prediction_output.json per model per case
+Step 2: Data Preparation     →  S1 CSVs, model directories, train/test splits
+Step 3: Feature Engineering  →  features.{train,test}.csv per sub-task
+Step 4: Training             →  GBDT stacking models (.pkl)
+Step 5: Inference            →  Predictions written to S1 CSVs
 ```
 
 ## Quick Start
 
-Prepare → build features → train → infer. The per-model LLM predictions (`--llm-root`)
-must already exist — generate them with Step 1. Ground-truth labels come from each
-case's `prognosis_new.json` under `--case-root`.
+Generate the LLM predictions first (Step 1), then prepare data, build features,
+train, and infer. Ground-truth labels come from each case's `prognosis_new.json`
+under `--case-root`.
 
 ```bash
 bash rare_prognosis/training/run_pipeline.sh \
@@ -38,7 +39,28 @@ bash rare_prognosis/training/run_pipeline.sh \
 
 ## Step-by-Step Usage
 
-### Step 0: Data Preparation
+### Step 1: LLM Generation
+
+[`generate_llm_outputs.py`](generate_llm_outputs.py) calls one model per invocation
+and writes `<llm-root>/<model>/<case>/prognosis_prediction_output.json`.
+
+The Prognosis ensemble uses these 12 model/output-directory identifiers:
+
+`Claude-Haiku-4.5`, `DeepSeek-R1`, `DeepSeek-V3.2-exp`,
+`Gemini-2.5-Flash`, `GPT-3.5-Turbo`, `GPT-4o-mini`, `GPT-5`, `o3-mini`,
+`Qwen3-14B`, `Qwen3-235B-Instruct`, `Qwen3-32B`, and `Qwen3-8B`.
+
+```bash
+python -m rare_prognosis.training.generate_llm_outputs \
+    /data/case_output /data/llm \
+    --model MODEL_NAME \
+    --config llm_config.json
+```
+
+Replace `MODEL_NAME` with each required ensemble identifier listed above. It
+must match either a `model` value or an entry in `tags` in `llm_config.json`.
+
+### Step 2: Data Preparation
 
 [`prepare_data.py`](prepare_data.py) converts raw case outputs and LLM predictions into S1-format CSVs and the directory structure expected by downstream scripts.
 
@@ -49,7 +71,7 @@ python -m rare_prognosis.training.prepare_data \
     --out-dir /data/prepared
 ```
 
-### Step 1: Feature Engineering
+### Step 3: Feature Engineering
 
 [`build_features.py`](build_features.py) constructs stacking features from multi-model outputs.
 
@@ -62,7 +84,7 @@ python -m rare_prognosis.training.build_features \
     --out-dir /data/prepared/features
 ```
 
-### Step 2: Training
+### Step 4: Training
 
 [`train_models.py`](train_models.py) trains a `GradientBoostingClassifier` per sub-task with 5-fold StratifiedKFold OOF evaluation. 
 
@@ -74,7 +96,7 @@ python -m rare_prognosis.training.train_models \
     --cv-folds 5
 ```
 
-### Step 3: Inference
+### Step 5: Inference
 
 [`infer_models.py`](infer_models.py) loads trained model bundles, builds per-case features, and writes averaged ensemble predictions to S1 CSVs.
 

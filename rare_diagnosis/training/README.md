@@ -15,10 +15,9 @@ Step 3: XGBoost Training        →  GroupKFold CV ranker (rank:ndcg)
 
 ## Quick Start
 
-Build features → train (feature engineering + ranking). The per-model LLM outputs
-(`--llm-root`) come from Step 1 below; the judge scores (`--score-root`, the ground
-truth) follow the paper's method (see the note under the table). Both must exist
-before running.
+Generate the LLM outputs first (Step 1), then build features and train the ranker.
+The per-model LLM outputs (`--llm-root`) and judge scores (`--score-root`, the
+ground truth) must both exist before running the commands below.
 
 ```bash
 # Primary stage
@@ -63,32 +62,34 @@ with `--primary-fname` / `--gt-fname` if needed. Run feature extraction on CPU w
 
 The first two arguments are positional (`input_folder` `output_folder`), and `--model` runs **one** model per invocation — loop over models to produce the multi-LLM outputs.
 
-```bash
-# Direct API mode (one model per run)
-python -m rare_diagnosis.training.generate_llm_outputs \
-    /data/query  /data/llm_outputs \
-    --model gpt-4o-mini \
-    --base-url https://api.openai.com/v1 \
-    --api-key $OPENAI_API_KEY \
-    --visit-type primary \
-    --num-workers 8
+The Diagnosis ensemble uses these 11 model/output-directory names:
 
-# Config-file mode (multiple providers in one JSON list; still one --model per run)
-for m in gpt-5 o3-mini gpt-3.5-turbo gpt-4o-mini; do
-    python -m rare_diagnosis.training.generate_llm_outputs \
-        /data/query  /data/llm_outputs \
-        --model "$m" --config llm_config.json \
-        --visit-type primary --num-workers 8
-done
+`Claude-Haiku-4.5`, `DeepSeek-R1`, `Gemini-2.5-Flash`, `GPT-3.5-Turbo`,
+`GPT-4o-mini`, `GPT-5`, `o3-mini`, `Qwen3-14B`, `Qwen3-235B-Instruct`,
+`Qwen3-32B`, and `Qwen3-8B`.
+
+```bash
+python -m rare_diagnosis.training.generate_llm_outputs \
+    /data/query /data/llm_outputs \
+    --model MODEL_NAME \
+    --config llm_config.json \
+    --visit-type primary
 
 # With OrphaCode RAG enrichment
 python -m rare_diagnosis.training.generate_llm_outputs \
-    /data/query  /data/llm_outputs \
-    --model gpt-4o-mini --config llm_config.json \
-    --visit-type primary --num-workers 8 \
+    /data/query /data/llm_outputs \
+    --model MODEL_NAME \
+    --config llm_config.json \
+    --visit-type primary \
     --enable-orphacode-rag \
     --rag-ontology-path rare_diagnosis/training/orphanet_hierarchy.json
 ```
+
+Replace `MODEL_NAME` with each required ensemble identifier listed above. It
+must match either a `model` value or an entry in `tags` in `llm_config.json`.
+Run the command separately for each required visit stage. Do not mix primary
+and follow-up generation in the same output root because the generator's output
+filenames overlap.
 
 ### Step 2: Feature Engineering
 

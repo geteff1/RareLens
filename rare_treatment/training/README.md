@@ -7,18 +7,17 @@ We provide the training pipeline for treatment plan ranking. For methodological 
 ## Pipeline
 
 ```
-Step 0: Data Preparation     →  Organized directory structure for downstream steps
 Step 1: LLM Generation       →  treatment_plan_output.json per model per case
-Step 2: Feature Engineering   →  features_{train,test}.csv 
-Step 3: Training + Inference  →  XGBoost GroupKFold ranker → ensemble predictions
+Step 2: Data Preparation     →  Organized directory structure for downstream steps
+Step 3: Feature Engineering  →  features_{train,test}.csv
+Step 4: Training + Inference →  XGBoost GroupKFold ranker → ensemble predictions
 ```
 
 ## Quick Start
 
-Prepare → build features → train → infer. The per-model LLM plans
-(`--llm-root`) come from Step 1 below; the judge scores (`--score-root`, the
-ground truth) follow the paper's method (see the note under the table). Both must
-exist before running.
+Generate the LLM plans first (Step 1), then prepare data, build features, train,
+and infer. The per-model LLM plans (`--llm-root`) and judge scores
+(`--score-root`, the ground truth) must both exist before running the pipeline.
 
 ```bash
 bash rare_treatment/training/run_pipeline.sh \
@@ -48,7 +47,29 @@ by the training step. Use `--num-gpus 0` if GPU feature workers fail.
 
 ## Step-by-Step Usage
 
-### Step 0: Data Preparation
+### Step 1: LLM Generation
+
+[`generate_llm_outputs.py`](generate_llm_outputs.py) calls LLMs to generate treatment recommendations per case. 
+
+The Treatment ensemble uses these 12 model/output-directory identifiers:
+
+`Claude-Haiku-4.5`, `DeepSeek-R1`, `DeepSeek-V3.2-exp`,
+`Gemini-2.5-Flash`, `GPT-3.5-Turbo`, `GPT-4o-mini`, `GPT-5`, `o3-mini`,
+`Qwen3-14B`, `Qwen3-235B-Instruct`, `Qwen3-32B`, and `Qwen3-8B`.
+
+```bash
+python -m rare_treatment.training.generate_llm_outputs \
+    /data/case_output /data/treatment_llm \
+    --model MODEL_NAME \
+    --config llm_config.json
+```
+
+Replace `MODEL_NAME` with each required ensemble identifier listed above. It
+must match either a `model` value or an entry in `tags` in `llm_config.json`.
+The command writes
+`/data/treatment_llm/<model>/<case>/treatment_plan_output.json`.
+
+### Step 2: Data Preparation
 
 [`prepare_data.py`](prepare_data.py) converts raw case outputs and LLM predictions into the directory structure expected by downstream scripts.
 
@@ -59,27 +80,7 @@ python -m rare_treatment.training.prepare_data \
     --out-dir /data/prepared
 ```
 
-### Step 1: LLM Generation
-
-[`generate_llm_outputs.py`](generate_llm_outputs.py) calls LLMs to generate treatment recommendations per case. 
-
-```bash
-# Direct API mode
-python -m rare_treatment.training.generate_llm_outputs \
-    /data/input /data/output \
-    --model qwen3-32b \
-    --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 \
-    --api-key $API_KEY \
-    --num-workers 10
-
-# Config file mode
-python -m rare_treatment.training.generate_llm_outputs \
-    /data/input /data/output \
-    --model gpt-5 \
-    --config configs/OAI_Config_List.json
-```
-
-### Step 2: Feature Engineering
+### Step 3: Feature Engineering
 
 [`build_features.py`](build_features.py) constructs features from multi-model outputs.
 
@@ -99,7 +100,7 @@ python -m rare_treatment.training.build_features \
     --num_gpus 1
 ```
 
-### Step 3: Training + Inference
+### Step 4: Training + Inference
 
 [`train_ranker.py`](train_ranker.py) trains an XGBoost LTR model with GroupKFold (5-fold) cross-validation.
 

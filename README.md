@@ -1,261 +1,196 @@
 # RareLens
 
-<div style='display:flex; gap: 0.6rem; '>
-<!-- TODO[badges]: Add the Paper-PDF badge once the arXiv link is finalized.
-<a href='ARXIV_LINK'><img src='https://img.shields.io/badge/Paper-PDF-red'></a> -->
-<a href='https://www.rarelens.org/'><img src='https://img.shields.io/badge/RareLens-WebApp-pink'></a>
-<a href='LICENSE'><img src='https://img.shields.io/badge/License-Apache--2.0-lightgrey'></a>
-</div>
+![](https://img.shields.io/badge/Paper-arXiv-red)![](https://img.shields.io/badge/WebApp-RareLens-pink)![](https://img.shields.io/badge/License-Apache--2.0-lightgrey)
 
 ## Overview
 
-<!-- TODO[overview]: Brief description of RareLens.
-![](./figs/architecture.png)
--->
+---
+
+RareLens is an AI framework designed to support rare-disease care across the clinical journey, from **early risk alerting and diagnosis to treatment planning and prognosis**. By formulating rare-disease care as a multi-stage decision process, RareLens leverages divergent reasoning from heterogeneous large language models and aligns their outputs for task-specific clinical decision-making.
+
+This repository is intended only for reproducing the model of the four RareLens modules—**RareAlert, RareDiagnosis, RareTreatment, and RarePrognosis**—together with a 500-case demonstration subset of RareLensBench.  
+
+[https://github.com/user-attachments/assets/046a0fb0-f5a5-4fde-b446-38a52ce74938](https://github.com/user-attachments/assets/046a0fb0-f5a5-4fde-b446-38a52ce74938)
 
 ## Web Application
 
-https://github.com/user-attachments/assets/046a0fb0-f5a5-4fde-b446-38a52ce74938
+---
 
-This repository is intended only for reproducing the model of each individual module. For the full end-to-end clinical pipeline — risk alerting, diagnosis, treatment, and prognosis — we strongly recommend using our pre-deployed web application [**RareLens**](https://www.rarelens.org/) for easy access and testing, without any local setup or LLM API keys.
+For the full end-to-end clinical pipeline, we strongly recommend using our pre-deployed [RareLens web application](https://www.rarelens.org/) for easy access and testing, without any local setup or LLM API keys.
 
 ## Demo
 
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <img width="100%" alt="RareAlert demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareAlert.gif" />
-      <h3 align="center">RareAlert</h3>
-      <p align="left">
-        Screens patient history and physical examination at the initial visit to flag potential rare-disease cases early and reduce diagnostic delays.
-      </p>
-    </td>
-    <td width="50%" valign="top">
-      <img width="100%" alt="RareDiagnosis demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareDiagnosis.gif" />
-      <h3 align="center">RareDiagnosis</h3>
-      <p align="left">
-        Generates diagnostic hypotheses, recommends additional investigations, and refines final and differential diagnoses after workup completion.
-      </p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <img width="100%" alt="RareTreatment demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareTreatment.gif" />
-      <h3 align="center">RareTreatment</h3>
-      <p align="left">
-        Provides evidence-based treatment plans with goals, interventions, implementation details, clinical significance, and safety considerations.
-      </p>
-    </td>
-    <td width="50%" valign="top">
-      <img width="100%" alt="RarePrognosis demo" src="https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RarePrognosis.gif" />
-      <h3 align="center">RarePrognosis</h3>
-      <p align="left">
-        Models disease progression and long-term prognosis to support patient communication, follow-up planning, and care coordination.
-      </p>
-    </td>
-  </tr>
-</table>
-
 ---
 
-The following sections provide instructions for reproducing the model training and evaluation reported in the paper. For the full end-to-end clinical pipeline, see the [Web Application](#web-application) above.
+
+|                                                                                                                                                                                                                                                                                |                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ![RareAlert demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareAlert.gif)RareAlertScreens patient history and physical examination at the initial visit to flag potential rare-disease cases early and reduce diagnostic delays.           | ![RareDiagnosis demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareDiagnosis.gif)RareDiagnosisGenerates diagnostic hypotheses, recommends additional investigations, and refines final and differential diagnoses after workup completion. |
+| ![RareTreatment demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RareTreatment.gif)RareTreatmentProvides evidence-based treatment plans with goals, interventions, implementation details, clinical significance, and safety considerations. | ![RarePrognosis demo](https://raw.githubusercontent.com/WangRongsheng/RareLens/main/assets/demos/RarePrognosis.gif)RarePrognosisModels disease progression and long-term prognosis to support patient communication, follow-up planning, and care coordination.              |
+
+
+
 
 ## Modules
 
-RareLens spans the four canonical stages of the rare-disease clinical workflow — risk alerting, diagnosis, treatment, and prognosis — each instantiated as an independently trainable and evaluable module.
+---
 
-| Module | Path | Task | Approach |
-| --- | --- | --- | --- |
-| Alert | `rare_alert/` | Rare disease risk scoring | End-to-end scoring via fine-tuned LLM (Qwen3-32B, LoRA SFT) |
-| Diagnosis | `rare_diagnosis/` | Candidate disease ranking (primary / follow-up) | Learning-to-rank over multi-LLM-generated candidates (XGBoost, GroupKFold) |
-| Treatment | `rare_treatment/` | Treatment plan ranking | Learning-to-rank over multi-LLM-generated candidates (XGBoost, GroupKFold) |
-| Prognosis | `rare_prognosis/` | Outcome / functional status / symptom burden prediction | Stacking ensemble over multi-LLM predictions (GBDT, 5-fold CV) |
+RareLens spans four stages of the rare-disease clinical workflow — risk alerting, diagnosis, treatment, and prognosis — implemented as separate task-specific modules.
+
+
+| Module            | Path                                 | Task                                                      | Approach                                                       |
+| ----------------- | ------------------------------------ | --------------------------------------------------------- | -------------------------------------------------------------- |
+| **RareAlert**     | `[rare_alert/](rare_alert/)`         | Rare disease risk scoring                                 | Fine-tuned LLM (Qwen3-32B, LoRA SFT)                           |
+| **RareDiagnosis** | `[rare_diagnosis/](rare_diagnosis/)` | Candidate disease ranking (primary / follow-up)           | Learning-to-rank over multi-LLM-generated candidates (XGBoost) |
+| **RareTreatment** | `[rare_treatment/](rare_treatment/)` | Treatment plan ranking                                    | Learning-to-rank over multi-LLM-generated candidates (XGBoost) |
+| **RarePrognosis** | `[rare_prognosis/](rare_prognosis/)` | Outcome, functional status, and symptom burden prediction | Stacking ensemble over multi-LLM predictions (GBDT)            |
+
+
+The following sections provide instructions for reproducing the model training reported in the paper.
 
 ## System Requirements
 
+---
+
+
+
 ### Hardware
+
 - **RAM**: Minimum 16GB (32GB recommended)
-- **Storage**: ~5GB for code, dataset, and model artifacts; additional ~80GB for local Qwen3-32B deployment (Alert module)
-- **GPU**: Optional for ML modules; required for local Alert model deployment (48GB+ VRAM recommended)
+- **Storage**: ~5GB for code, demo data, and model artifacts; additional ~80GB for local Qwen3-32B deployment
+- **GPU**: Optional for Diagnosis, Treatment, and Prognosis; required for local RareAlert deployment (48GB+ VRAM recommended)
 - **CPU**: Any modern 64-bit processor
 
-**Note:** The Alert module can also be accessed via API without local GPU. ML modules (Diagnosis, Treatment, Prognosis) run on CPU.
+
 
 ### Software
+
 - **OS**: Any 64-bit operating system
-- **Python**: 3.10+
-- **Verified environment**: Python 3.10, torch 2.7.1+cu118, transformers 4.57.3, sentence-transformers 5.2.0, numpy 1.26.4
+- **Python**: 3.10
+**Note:** RareAlert uses a fine-tuned Qwen3-32B model and can also be accessed through a remote API without a local GPU. The Diagnosis, Treatment, and Prognosis modules are based primarily on machine-learning pipelines and can run on CPU.
 
-## LLM API Key Requirements
+Verified environment: Python 3.10, torch 2.7.1+cu118, transformers 4.57.3, sentence-transformers 5.2.0, numpy 1.26.4
 
-Each module's `generate_llm_outputs.py` calls LLMs via the OpenAI-compatible API, configured either by command-line flags (`--base-url`, `--api-key`, `--models`) or a JSON config file (`--config llm_config.json`).
+## LLM Configuration
 
-Supported providers:
+---
 
-| Provider | Models | Sign up |
-| --- | --- | --- |
-| OpenAI | gpt-5, gpt-4o-mini, gpt-3.5-turbo, o3-mini | [platform.openai.com](https://platform.openai.com) |
-| Google | gemini-2.5-flash-preview-05-20-nothinking | [ai.google.dev](https://ai.google.dev) |
-| Qwen | qwen3-8b, qwen3-14b, qwen3-32b, qwen3-235b-a22b-instruct-2507 | [dashscope.aliyun.com](https://dashscope.aliyun.com) |
-| DeepSeek | deepseek-r1-0528, deepseek-v3 | [platform.deepseek.com](https://platform.deepseek.com) |
-| Anthropic | claude-haiku-4-5-20251001 | [console.anthropic.com](https://console.anthropic.com) |
+RareLens uses OpenAI-compatible endpoints for LLM inference. **RareAlert** runs with a fine-tuned Qwen3-32B model, while **RareDiagnosis, RareTreatment, and RarePrognosis** use outputs generated from multiple LLMs for downstream machine-learning pipelines.
 
-All providers use the OpenAI-compatible protocol and can be pointed to a local vLLM / Ollama / SGLang server.
+Endpoints can be configured with `--base-url`, `--api-key`, and `--model`, or through a JSON configuration file. Local models can also be served with frameworks such as vLLM, Ollama, or SGLang.
 
 ## Installation
 
+---
+
 1. **Clone the repository:**
-   ```bash
-   git clone <REPO_URL>
+  ```bash
+   git clone https://github.com/geteff1/RareLens.git
    cd RareLens
-   ```
+  ```
+2. **Create an isolated Python environment:**
+  ```bash
+   python --version  # verify Python 3.10.x
+   python -m venv .venv
+  ```
+   Activate it with `source .venv/bin/activate` on Linux/macOS, or `. .\.venv\Scripts\Activate.ps1` in Windows PowerShell.
+3. **(Optional) Install CUDA PyTorch** for GPU-accelerated feature engineering:
+  ```bash
+   python -m pip install "torch==2.7.1" --index-url https://download.pytorch.org/whl/cu118
+  ```
+   Skip this step for a CPU-only installation.
+4. **Install dependencies:**
+  ```bash
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements.txt
+  ```
+5. **(Optional) Pre-cache feature-engineering models.** The Diagnosis and Treatment feature builders download these from HuggingFace on first run (Prognosis needs none):
 
-2. **(Optional) Install CUDA PyTorch** for GPU-accelerated feature engineering:
-   ```bash
-   pip install torch --index-url https://download.pytorch.org/whl/cu121  # adjust cu121 to your CUDA version
-   ```
+  | Used by              | Model                                | Purpose                                |
+  | -------------------- | ------------------------------------ | -------------------------------------- |
+  | Diagnosis, Treatment | `pritamdeka/S-PubMedBert-MS-MARCO`   | semantic similarity embeddings         |
+  | Treatment            | `cross-encoder/nli-deberta-v3-large` | NLI entailment (needs `sentencepiece`) |
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
 
-4. **(Optional) Pre-cache feature-engineering models.** The Diagnosis and Treatment feature builders download these from HuggingFace on first run (Prognosis needs none):
-
-   | Used by | Model | Purpose |
-   | --- | --- | --- |
-   | Diagnosis, Treatment | `pritamdeka/S-PubMedBert-MS-MARCO` | semantic similarity embeddings |
-   | Treatment | `cross-encoder/nli-deberta-v3-large` | NLI entailment (needs `sentencepiece`) |
-
-   ```bash
-   pip install sentencepiece                     # required by the deberta-v3 tokenizer
-   python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
-   SentenceTransformer('pritamdeka/S-PubMedBert-MS-MARCO'); \
-   CrossEncoder('cross-encoder/nli-deberta-v3-large'); print('models cached')"
-   ```
+**Typical installation time:** The basic CPU installation takes approximately 10 minutes.
 
 ## Dataset
 
-For reproducibility, we release a 500-case demo subset ([`data_500/`](data_500/)) of the full RarelensBench used in our experiments. See [`data_500/README.md`](data_500/README.md) for format details.
+---
 
-## Reproduction Instructions
+For reproducibility, we release a 500-case demo subset (`[data_500/](data_500/)`) of the full RarelensBench used in our experiments. See `[data_500/README.md](data_500/README.md)` for format details.
 
-Each module provides a one-click training pipeline and a standalone inference script.
-
-> The judge scores used as ground truth for ranking (the `--score-root` for Diagnosis
-> and Treatment) are produced by LLM-as-judge evaluation following the method described
-> in the paper. That scoring code is not included here — please refer to the paper to
-> reproduce them.
-
-### Alert
-
-1. **Training:** fine-tuned Qwen3-32B via [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) (LoRA SFT).
-
-2. **Inference:**
-   ```bash
-   python -c "
-   from rare_alert.training.inference import RiskStage, RiskStageConfig
-   cfg = RiskStageConfig(base_url='http://localhost:8000/v1', api_key='EMPTY', model='rare_alert')
-   stage = RiskStage(cfg)
-   result = stage.run_sync(open('/data/case/primary_consultation.json').read())
-   print(result)
-   "
-   ```
-
-See [`rare_alert/training/README.md`](rare_alert/training/README.md) for details.
+## Code Demo
 
 ---
 
-### Diagnosis
+A 500-case subset of RareLensBench is provided in `[data_500/](data_500/)` for small-scale testing and reproducibility checks.
 
-1. **Training:**
-   ```bash
-   bash rare_diagnosis/training/reproduce_diag.sh \
-       --python /path/to/python \
-       --visit-type primary \
-       --case-root /data/cases \
-       --score-root /data/scores \
-       --llm-root /data/llm_outputs \
-       --train-ids /data/splits/train.json \
-       --test-ids /data/splits/test.json
-   ```
+For module-specific execution instructions, see:
 
-2. **Inference:**
-   ```bash
-   python -m rare_diagnosis.training.infer_ranker \
-       --input-dir /data/features \
-       --model-dir /data/models/primary/models \
-       --config rare_diagnosis/training/best_hyperopt_config_primary.json \
-       --out-dir /data/inference_output
-   ```
+- [RareAlert](rare_alert/training/README.md)
+- [RareDiagnosis](rare_diagnosis/training/README.md)
+- [RareTreatment](rare_treatment/training/README.md)
+- [RarePrognosis](rare_prognosis/training/README.md)
 
-See [`rare_diagnosis/training/README.md`](rare_diagnosis/training/README.md) for details.
+### Expected output
 
----
+A successful run produces module-specific prediction outputs:
 
-### Treatment
+| Module | Expected output |
+| --- | --- |
+| **RareAlert** | A structured risk assessment containing `risk_score`, `key_insights`, and `risk_explanation`. |
+| **RareDiagnosis** | Ranked diagnostic candidates in `test_predictions_ranked.json` and `test_predictions_ranked.csv`. |
+| **RareTreatment** | Ranked treatment candidates in `ranked_results.json` and `test_predictions.csv`. |
+| **RarePrognosis** | Predictions for overall outcome, functional status, and symptom burden in task-specific `S1_stacking_gbdt.csv` files. |
 
-1. **Training:**
-   ```bash
-   bash rare_treatment/training/run_pipeline.sh \
-       --python /path/to/python \
-       --case-root /data/case_output \
-       --llm-root /data/treatment_llm \
-       --score-root /data/treatment_scores
-   ```
+**Typical runtime:** On a CPU-only Windows environment, RareDiagnosis typically completes in about 1–2 minutes, RareTreatment in under 10 minutes, and RarePrognosis in under 1 minute. LLM generation time is not included because it varies with the selected model, provider, and API latency.
 
-2. **Inference:**
-   ```bash
-   python -m rare_treatment.training.infer_ranker \
-       --model-dir /data/models/models \
-       --test-csv /data/features/features_test.csv \
-       --out-dir /data/inference_output
-   ```
-
-See [`rare_treatment/training/README.md`](rare_treatment/training/README.md) for details.
+## Reproduction
 
 ---
 
-### Prognosis
+Module-specific training and inference instructions are provided in the corresponding documentation:
 
-1. **Training:**
-   ```bash
-   bash rare_prognosis/training/run_pipeline.sh \
-       --python /path/to/python \
-       --case-root /data/case_output \
-       --llm-root /data/llm
-   ```
 
-2. **Inference:**
-   ```bash
-   python -m rare_prognosis.training.infer_models \
-       --rareprognosis-root /data/rareprognosis \
-       --models-root /data/models \
-       --train-ids /data/dataset/train_case_ids.json \
-       --test-ids /data/dataset/test_case_ids.json \
-       --models-dir /data/trained_models \
-       --task all
-   ```
+| Module            | Documentation                                                            |
+| ----------------- | ------------------------------------------------------------------------ |
+| **RareAlert**     | `[rare_alert/training/README.md](rare_alert/training/README.md)`         |
+| **RareDiagnosis** | `[rare_diagnosis/training/README.md](rare_diagnosis/training/README.md)` |
+| **RareTreatment** | `[rare_treatment/training/README.md](rare_treatment/training/README.md)` |
+| **RarePrognosis** | `[rare_prognosis/training/README.md](rare_prognosis/training/README.md)` |
 
-See [`rare_prognosis/training/README.md`](rare_prognosis/training/README.md) for details.
+
+These guides describe the required inputs, LLM generation or model serving, feature construction, model training, and inference procedures for each module.
+
+> **Note:** The evaluation protocol and LLM judges used to generate the ranking scores for RareDiagnosis and RareTreatment are described in the paper. The corresponding evaluation/judge code is not included in this repository.
+
+
 
 ## Citation
 
-<!-- TODO[citation]:
+---
+
 ```bibtex
-@article{TODO,
-  title   = {TODO},
-  author  = {TODO},
-  journal = {TODO},
-  year    = {TODO}
+@article{chen2026rarelens,
+  title   = {RareLens: Towards End-to-End Rare Disease Care via Aligning Divergent Large Language Model Reasoning},
+  author  = {Chen, Xi and Zhou, Hongru and Feng, Shiyu and Zhou, Hanyu and Yi, Huahui and Wang, Rongsheng and He, Tiancheng and Wang, Kun and Liu, Pingping and Li, Qiankun and Lin, Sicheng and Ou, Huiying and Zheng, Xiaohong and Zang, Tianying and Wu, Zhuohang and Jiang, Leheng and Cao, Kexin and Zhang, Wenhan and Li, ChengYi and Wang, Zhiyang and Li, Songlin and Wang, Benyou and Yin, Ningbei and Zhang, Shaoting and Fu, Weili and Li, Jian and Li, Kang},
+  journal = {arXiv preprint arXiv:2607.23290},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2607.23290}
 }
 ```
--->
+
+
+
+## Acknowledgements
+
+---
+
+We gratefully acknowledge the developers and contributors of the public rare-disease datasets, clinical resources, foundation models, and open-source tools that supported the development and evaluation of RareLens.
 
 ## License
 
-This project is released under the Apache License 2.0. See [`LICENSE`](LICENSE) for details.
+---
 
-## Acknowledgement
-
-<!-- TODO[ack]: Acknowledge public datasets, foundation models, and tools used. -->
+This project is released under the Apache License 2.0. See `[LICENSE](LICENSE)` for details.
