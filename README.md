@@ -160,7 +160,7 @@ A successful run produces module-specific prediction outputs:
 | **RareAlert** | A structured risk assessment containing `risk_score`, `key_insights`, and `risk_explanation`. |
 | **RareDiagnosis** | Ranked diagnostic candidates in `test_predictions_ranked.json` and `test_predictions_ranked.csv`. |
 | **RareTreatment** | Ranked treatment candidates in `ranked_results.json` and `test_predictions.csv`. |
-| **RarePrognosis** | Predictions for overall outcome, functional status, and symptom burden in task-specific `S1_stacking_gbdt.csv` files. |
+| **RarePrognosis** | Predictions for overall outcome, functional status, and symptom burden in task-specific `result.csv` files. |
 
 **Typical runtime:** On a CPU-only Windows environment, RareDiagnosis typically completes in about 1–2 minutes, RareTreatment in under 10 minutes, and RarePrognosis in under 1 minute. LLM generation time is not included because it varies with the selected model, provider, and API latency.
 
@@ -179,7 +179,7 @@ Module-specific training and inference instructions are provided in the correspo
 
 These guides describe the required inputs, LLM generation or model serving, feature construction, model training, and inference procedures for each module.
 
-> **Note:** Reproducing the metrics reported in the paper requires the complete cohort and the original train/test splits, which are not included in this demo subset. The evaluation metrics and LLM-based judging procedures should be reimplemented following the protocols described in the paper.
+> **Note:** The evaluation metrics and LLM-based judging procedures should be reimplemented following the protocols described in the paper.
 
 
 

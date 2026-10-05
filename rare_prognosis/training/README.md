@@ -134,5 +134,3 @@ python -m rare_prognosis.training.infer_models \
   --test-ids <SPLIT_ROOT>/test.json \
   --models-dir <MODEL_ROOT>
 ```
-
-Predictions and exact normalized-label correctness are written to `result.csv` in each task directory under `<RESULT_ROOT>`.
