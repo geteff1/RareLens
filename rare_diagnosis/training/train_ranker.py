@@ -3,15 +3,15 @@
 Train diagnosis ranking model (XGBoost LTR).
 
 Loads features CSV, performs GroupKFold cross-validation, and outputs
-ensemble predictions + feature importance.
+ensemble predictions.
 
 Supports loading best hyperparameters from best_hyperopt_config.json.
 
 Usage:
     python -m rare_diagnosis.training.train_ranker \
-        --input-dir /data/features/primary \
-        --out-dir /data/models/primary \
-        --config best_hyperopt_config_primary.json \
+        --input-dir outputs/diagnosis_demo_primary/features \
+        --out-dir outputs/diagnosis_demo_primary/model \
+        --config rare_diagnosis/training/best_hyperopt_config_primary.json \
         --use-gpu
 """
 from __future__ import annotations
@@ -80,9 +80,15 @@ def get_monotone_constraints(feature_names: List[str]) -> Tuple[int, ...]:
 
 META_COLS = {
     "split", "case_id", "stage", "orphacode", "label",
-    "diagnosis_name", "gt_matches_score_5",
+    "diagnosis_name", "gt_matches_score_5", "gt_positive_count",
     "has_positive_label", "case_entropy",
 }
+
+MODEL_FEATURE_PREFIXES = ("rank__", "conf__", "hit__", "z_conf__", "r_sim__")
+
+
+def is_model_feature(name: str) -> bool:
+    return name.startswith(MODEL_FEATURE_PREFIXES)
 
 
 def load_data(path: str) -> pd.DataFrame:
@@ -146,7 +152,8 @@ def train(args):
     df_test = load_data(test_path)
 
     # Feature columns
-    feat_cols = [c for c in df_train.columns if c not in META_COLS]
+    available_feat_cols = [c for c in df_train.columns if c not in META_COLS]
+    feat_cols = list(available_feat_cols)
 
     # Load best params from config if provided
     params: Dict[str, Any] = {}
@@ -157,8 +164,17 @@ def train(args):
         params.update(best_params)
         config_features = config.get("feature_names")
         if config_features:
+            # Keep the tuned non-model feature subset, but take model-specific
+            # columns from this run's dynamic feature schema. This allows a
+            # user-selected model subset without retaining columns for models
+            # that were not generated.
             available = set(df_train.columns)
-            feat_cols = [f for f in config_features if f in available]
+            base_features = [
+                f for f in config_features
+                if f in available and f not in META_COLS and not is_model_feature(f)
+            ]
+            dynamic_model_features = [f for f in available_feat_cols if is_model_feature(f)]
+            feat_cols = base_features + dynamic_model_features
         logger.info("Loaded config: %s (%d params, %d features)", args.config, len(best_params), len(feat_cols))
 
     # Override with CLI args
@@ -177,11 +193,12 @@ def train(args):
     n_splits = args.n_splits
     gkf = GroupKFold(n_splits=n_splits)
     model_dir = os.path.join(args.out_dir, "models")
+    results_dir = args.results_dir or os.path.join(args.out_dir, "results")
     os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(results_dir, exist_ok=True)
 
     test_preds = np.zeros(len(df_test))
     cv_scores = []
-    importance_list = []
 
     logger.info("Training %d-fold GroupKFold on %d rows, %d features", n_splits, len(df_train), len(feat_cols))
 
@@ -226,10 +243,6 @@ def train(args):
             os.path.join(model_dir, f"xgboost_fold_{fold + 1}.json")
         )
 
-        # Collect feature importance
-        imp = model.get_booster().get_score(importance_type="total_gain")
-        importance_list.append(imp)
-
         # Validation metrics
         val_pred = model.predict(X_val)
         sorted_val = sorted_val.copy()
@@ -251,17 +264,6 @@ def train(args):
 
     logger.info("=" * 40)
     logger.info("Avg CV Acc@1: %.2f%% (Std: %.4f)", np.mean(cv_scores) * 100, np.std(cv_scores))
-
-    # Aggregate feature importance
-    agg_imp: Dict[str, float] = {}
-    for imp in importance_list:
-        for feat, val in imp.items():
-            agg_imp[feat] = agg_imp.get(feat, 0) + val
-    for feat in agg_imp:
-        agg_imp[feat] /= n_splits
-
-    imp_df = pd.DataFrame(list(agg_imp.items()), columns=["Feature", "Gain"]).sort_values("Gain", ascending=False)
-    imp_df.to_csv(os.path.join(args.out_dir, "feature_importance.csv"), index=False)
 
     # Save ensemble predictions as JSON
     test_preds /= n_splits
@@ -304,17 +306,17 @@ def train(args):
             })
         json_results[str(cid)] = {"ground_truth": gt_info, "predictions": predictions}
 
-    json_path = os.path.join(args.out_dir, "test_predictions_ranked.json")
+    json_path = os.path.join(results_dir, "test_predictions_ranked.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(json_results, f, indent=2, ensure_ascii=False)
 
     # Also save as CSV
     csv_cols = ["case_id", "rank", "orphacode", "diagnosis_name", "ensemble_score", "label"]
     sorted_test_df[csv_cols].to_csv(
-        os.path.join(args.out_dir, "test_predictions_ranked.csv"), index=False
+        os.path.join(results_dir, "test_predictions_ranked.csv"), index=False
     )
 
-    logger.info("Finished. Results saved to %s", args.out_dir)
+    logger.info("Finished. Models saved to %s; ranked results saved to %s", model_dir, results_dir)
 
 
 if __name__ == "__main__":
@@ -322,6 +324,8 @@ if __name__ == "__main__":
     parser.add_argument("--input-dir", required=True,
                         help="Directory with features.train.csv and features.test.csv")
     parser.add_argument("--out-dir", required=True, help="Output directory")
+    parser.add_argument("--results-dir", default=None,
+                        help="Directory for test_predictions_ranked.{json,csv} (default: <out-dir>/results)")
     parser.add_argument("--config", default=None,
                         help="Path to best_hyperopt_config.json for loading best params")
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")

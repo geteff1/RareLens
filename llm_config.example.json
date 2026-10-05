@@ -1,62 +1,79 @@
 [
   {
+    "model": "gpt-5-nano",
+    "tags": ["GPT-5-Nano"],
+    "credentials_from": "GPT-5"
+  },
+  {
+    "model": "claude-haiku-4-5",
+    "tags": ["Claude-Haiku-4.5"],
+    "base_url": "REPLACE_WITH_ANTHROPIC_BASE_URL",
+    "api_key": "REPLACE_WITH_ANTHROPIC_API_KEY"
+  },
+  {
+    "model": "deepseek-r1",
+    "tags": ["DeepSeek-R1"],
+    "base_url": "REPLACE_WITH_DEEPSEEK_BASE_URL",
+    "api_key": "REPLACE_WITH_DEEPSEEK_API_KEY"
+  },
+  {
+    "model": "deepseek-v3.2-exp",
+    "tags": ["DeepSeek-V3.2-exp"],
+    "base_url": "REPLACE_WITH_DEEPSEEK_BASE_URL",
+    "api_key": "REPLACE_WITH_DEEPSEEK_API_KEY"
+  },
+  {
+    "model": "gemini-2.5-flash",
+    "tags": ["Gemini-2.5-Flash"],
+    "base_url": "REPLACE_WITH_GOOGLE_BASE_URL",
+    "api_key": "REPLACE_WITH_GOOGLE_API_KEY"
+  },
+  {
+    "model": "gpt-3.5-turbo",
+    "tags": ["GPT-3.5-Turbo"],
+    "base_url": "REPLACE_WITH_OPENAI_BASE_URL",
+    "api_key": "REPLACE_WITH_OPENAI_API_KEY"
+  },
+  {
     "model": "gpt-4o-mini",
-    "tags": ["gpt-4o-mini"],
-    "base_url": "https://api.openai.com/v1",
-    "api_key": "REPLACE_WITH_OPENAI_KEY"
+    "tags": ["GPT-4o-mini"],
+    "base_url": "REPLACE_WITH_OPENAI_BASE_URL",
+    "api_key": "REPLACE_WITH_OPENAI_API_KEY"
   },
   {
     "model": "gpt-5",
-    "tags": ["gpt-5"],
-    "base_url": "https://api.openai.com/v1",
-    "api_key": "REPLACE_WITH_OPENAI_KEY"
+    "tags": ["GPT-5"],
+    "base_url": "REPLACE_WITH_OPENAI_BASE_URL",
+    "api_key": "REPLACE_WITH_OPENAI_API_KEY"
   },
   {
     "model": "o3-mini",
     "tags": ["o3-mini"],
-    "base_url": "https://api.openai.com/v1",
-    "api_key": "REPLACE_WITH_OPENAI_KEY"
+    "base_url": "REPLACE_WITH_OPENAI_BASE_URL",
+    "api_key": "REPLACE_WITH_OPENAI_API_KEY"
   },
   {
-    "model": "gpt-3.5-turbo",
-    "tags": ["gpt-3.5-turbo"],
-    "base_url": "https://api.openai.com/v1",
-    "api_key": "REPLACE_WITH_OPENAI_KEY"
-  },
-  {
-    "model": "qwen3-32b",
-    "tags": ["qwen3-32b"],
-    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "api_key": "REPLACE_WITH_DASHSCOPE_KEY"
+    "model": "qwen3-14b",
+    "tags": ["Qwen3-14B"],
+    "base_url": "REPLACE_WITH_DASHSCOPE_BASE_URL",
+    "api_key": "REPLACE_WITH_DASHSCOPE_API_KEY"
   },
   {
     "model": "qwen3-235b-a22b-instruct-2507",
-    "tags": ["qwen3-235b-a22b-instruct-2507"],
-    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "api_key": "REPLACE_WITH_DASHSCOPE_KEY"
+    "tags": ["Qwen3-235B-Instruct"],
+    "base_url": "REPLACE_WITH_DASHSCOPE_BASE_URL",
+    "api_key": "REPLACE_WITH_DASHSCOPE_API_KEY"
   },
   {
-    "model": "deepseek-v3",
-    "tags": ["deepseek-v3"],
-    "base_url": "https://api.deepseek.com",
-    "api_key": "REPLACE_WITH_DEEPSEEK_KEY"
+    "model": "qwen3-32b",
+    "tags": ["Qwen3-32B"],
+    "base_url": "REPLACE_WITH_DASHSCOPE_BASE_URL",
+    "api_key": "REPLACE_WITH_DASHSCOPE_API_KEY"
   },
   {
-    "model": "deepseek-r1-0528",
-    "tags": ["deepseek-r1-0528"],
-    "base_url": "https://api.deepseek.com",
-    "api_key": "REPLACE_WITH_DEEPSEEK_KEY"
-  },
-  {
-    "model": "claude-haiku-4-5-20251001",
-    "tags": ["claude-haiku-4-5-20251001"],
-    "base_url": "https://api.anthropic.com/v1/",
-    "api_key": "REPLACE_WITH_ANTHROPIC_KEY"
-  },
-  {
-    "model": "gemini-2.5-flash-preview-05-20-nothinking",
-    "tags": ["gemini-2.5-flash-preview-05-20-nothinking"],
-    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-    "api_key": "REPLACE_WITH_GOOGLE_KEY"
+    "model": "qwen3-8b",
+    "tags": ["Qwen3-8B"],
+    "base_url": "REPLACE_WITH_DASHSCOPE_BASE_URL",
+    "api_key": "REPLACE_WITH_DASHSCOPE_API_KEY"
   }
 ]

@@ -3,8 +3,8 @@
 Build diagnosis ranking features for the FOLLOW-UP consultation stage.
 
 Same as primary, plus:
-  - Query text includes diagnostic_test.json results.
-  - Model outputs are merged from primary + follow_up_consultation_output_unified.json.
+  - Query text includes the complete follow_up_consultation.json record.
+  - Model outputs are merged from primary and follow-up diagnosis files.
 
 Elite-Weighted Feature Engineering (V4.4 - Relaxed Recall & Greedy Labeling).
 
@@ -12,12 +12,12 @@ Output: features.{train|test}.csv, groups.{train|test}.csv
 
 Usage:
     python build_features_followup.py \\
-        --query_root /data/query \\
-        --primary_models_root /data/models \\
-        --gt_root /data/gt \\
-        --out_dir /data/features/followup \\
-        --train_ids dataset/train.json \\
-        --test_ids dataset/test.json
+        --query_root data_500 \\
+        --primary_models_root outputs/diagnosis_demo_followup/llm_outputs \\
+        --score_root outputs/diagnosis_demo_followup/judge_scores \\
+        --out_dir outputs/diagnosis_demo_followup/features \\
+        --train_ids outputs/diagnosis_demo_followup/splits/train.json \\
+        --test_ids outputs/diagnosis_demo_followup/splits/test.json
 """
 from __future__ import annotations
 
@@ -52,22 +52,22 @@ except ImportError:
 
 ELITE_MODELS_CONFIG = {
     # Kings (high weight)
-    "gpt-5": 10.0,
+    "GPT-5": 10.0,
     "o3-mini": 8.0,
     # Knights (medium weight)
-    "gpt-3.5-turbo": 6.0,
-    "gemini-2.5-flash-preview-05-20-nothinking": 6.0,
-    "deepseek-r1-0528": 5.5,
-    "qwen3-235b-a22b-instruct-2507": 4.5,
-    "claude-haiku-4-5-20251001": 3.0,
+    "GPT-3.5-Turbo": 6.0,
+    "Gemini-2.5-Flash": 6.0,
+    "DeepSeek-R1": 5.5,
+    "Qwen3-235B-Instruct": 4.5,
+    "Claude-Haiku-4.5": 3.0,
     # Pawns (low weight)
-    "qwen3-8b": 1.0,
-    "qwen3-14b": 1.0,
-    "qwen3-32b": 1.0,
-    "gpt-4o-mini": 1.0,
+    "Qwen3-8B": 1.0,
+    "Qwen3-14B": 1.0,
+    "Qwen3-32B": 1.0,
+    "GPT-4o-mini": 1.0,
 }
 
-KINGS_LIST = ["gpt-5", "o3-mini"]
+KINGS_LIST = ["GPT-5", "o3-mini"]
 
 # ── Logging & regex ──────────────────────────────────────────────────────────
 
@@ -226,32 +226,19 @@ def parse_model_output(model_obj: Any) -> List[Dict]:
 # ── Follow-up specific helpers ───────────────────────────────────────────────
 
 def flatten_json_to_text(data: Any) -> str:
-    """Turn diagnostic_test.json content into a flat text string."""
-    texts = []
+    """Turn nested follow-up record content into a flat text string."""
+    texts: List[str] = []
     if isinstance(data, dict):
         for k, v in data.items():
             if isinstance(v, (str, int, float)):
                 texts.append(f"{k}: {v}")
-            elif isinstance(v, list):
-                texts.append(f"{k}: {', '.join(map(str, v))}")
+            elif isinstance(v, (dict, list)):
+                nested = flatten_json_to_text(v)
+                if nested:
+                    texts.append(f"{k}: {nested}")
     elif isinstance(data, list):
-        texts.append(", ".join(map(str, data)))
+        texts.extend(filter(None, (flatten_json_to_text(item) for item in data)))
     return ". ".join(texts)
-
-
-def merge_diagnosis_data(mfp_data: Dict, wmfp_data: Dict) -> Dict:
-    """Merge primary (orphacode) and follow-up (score, reasoning) diagnosis dicts."""
-    merged = {"most_likely_diagnosis": {}}
-    mfp_diag = mfp_data.get("most_likely_diagnosis", {})
-    wmfp_diag = wmfp_data.get("most_likely_diagnosis", {})
-    for key in set(mfp_diag) | set(wmfp_diag):
-        entry = {}
-        if key in mfp_diag:
-            entry.update(mfp_diag[key])
-        if key in wmfp_diag:
-            entry.update(wmfp_diag[key])
-        merged["most_likely_diagnosis"][key] = entry
-    return merged
 
 
 # ── Per-case worker ──────────────────────────────────────────────────────────
@@ -266,7 +253,7 @@ def process_single_case(
 
     ont_manager = OntologyManager(args_dict["ontology_path"])
 
-    # 1. Load patient data (primary + diagnostic tests)
+    # 1. Load primary and follow-up patient data.
     q_root = Path(args_dict["query_root"])
     p_path = q_root / case_id / "primary_consultation.json"
     if not p_path.is_file():
@@ -276,15 +263,16 @@ def process_single_case(
     cc = primary_obj.get("medical_history", {}).get("chief_complaint", "")
     hpi = primary_obj.get("medical_history", {}).get("history_of_present_illness", "")
 
-    # Follow-up: include diagnostic test results in query text
-    d_path = q_root / case_id / "diagnostic_test.json"
-    diag_text = ""
-    if d_path.is_file():
-        diag_text = flatten_json_to_text(read_json(d_path))
-    sem_query_text = f"Chief Complaint: {cc}. History: {hpi}. Diagnostic Results: {diag_text}".strip()
+    followup_path = q_root / case_id / "follow_up_consultation.json"
+    followup_text = ""
+    if followup_path.is_file():
+        followup_text = flatten_json_to_text(read_json(followup_path))
+    sem_query_text = (
+        f"Chief Complaint: {cc}. History: {hpi}. Follow-up Record: {followup_text}"
+    ).strip()
 
     # Demographics
-    pat_info = primary_obj.get("patient_info", {})
+    pat_info = primary_obj.get("patient_info") or primary_obj.get("basic_information", {})
     age_raw = pat_info.get("age")
     pat_age = -1
     if age_raw is not None:
@@ -310,17 +298,17 @@ def process_single_case(
 
     # 2. Load ground truth (union of all score files, evaluation_score == 5)
     gt_positive_names: Set[str] = set()
-    gt_root_path = Path(args_dict["gt_root"])
+    gt_root_path = Path(args_dict["score_root"])
 
     score_files: List[Path] = []
-    direct = gt_root_path / case_id / args_dict["gt_fname"]
+    direct = gt_root_path / case_id / args_dict["score_fname"]
     if direct.is_file():
         score_files.append(direct)
     else:
         try:
             for item in gt_root_path.iterdir():
                 if item.is_dir():
-                    sub = item / case_id / args_dict["gt_fname"]
+                    sub = item / case_id / args_dict["score_fname"]
                     if sub.is_file():
                         score_files.append(sub)
         except Exception:
@@ -356,16 +344,16 @@ def process_single_case(
 
     for mn in target_models:
         mfp = model_root / mn / case_id / args_dict["primary_fname"]
-        wmfp = model_root / mn / case_id / "follow_up_consultation_output_unified.json"
-        if not mfp.is_file():
+        wmfp = model_root / mn / case_id / args_dict["followup_fname"]
+        if not mfp.is_file() or not wmfp.is_file():
             continue
 
-        # Merge primary + follow-up outputs
-        mfp_json = read_json(mfp)
-        wmfp_json = read_json(wmfp)
-        merged = merge_diagnosis_data(mfp_json, wmfp_json)["most_likely_diagnosis"]
+        # Pool candidates from both stages. Parse them separately so each stage
+        # retains its original rank instead of pairing unrelated diagnosisN keys.
+        observations = parse_model_output(read_json(mfp))
+        observations.extend(parse_model_output(read_json(wmfp)))
 
-        for obs in parse_model_output(merged):
+        for obs in observations:
             oc = obs["orphacode"]
             name_raw = obs["diagnosis_name"]
 
@@ -511,7 +499,7 @@ def process_single_case(
             **ont_feats,
         }
 
-        for mn in ELITE_MODELS_CONFIG:
+        for mn in target_models:
             if mn in cand["per_model"]:
                 info = cand["per_model"][mn]
                 row[f"rank__{mn}"] = info["rank"]
@@ -556,14 +544,46 @@ BASE_HEADERS = [
     "ont_depth", "ont_is_leaf", "ont_ancestor_match", "ont_num_parents",
 ]
 
-MODEL_HEADERS = [
-    f"{sfx}{mn}"
-    for mn in ELITE_MODELS_CONFIG
-    for sfx in ("rank__", "conf__", "hit__", "z_conf__", "r_sim__")
-]
-
-ALL_HEADERS = BASE_HEADERS + MODEL_HEADERS
 GROUP_HEADERS = ["split", "case_id", "candidate_count", "has_positive_label", "case_entropy"]
+
+
+def build_model_headers(model_names: List[str]) -> List[str]:
+    return [
+        f"{sfx}{mn}"
+        for mn in model_names
+        for sfx in ("rank__", "conf__", "hit__", "z_conf__", "r_sim__")
+    ]
+
+
+def discover_active_models(
+    models_root: Path,
+    score_root: Path,
+    case_ids: List[str],
+    primary_fname: str,
+    followup_fname: str,
+    score_fname: str,
+    requested_models: Optional[List[str]] = None,
+) -> List[str]:
+    """Models with both-stage predictions and at least one follow-up score."""
+    active: List[str] = []
+    if not models_root.is_dir():
+        return active
+    requested = set(requested_models or [])
+    for model_dir in sorted((p for p in models_root.iterdir() if p.is_dir()), key=lambda p: p.name):
+        name = model_dir.name
+        if requested and name not in requested:
+            continue
+        if name not in ELITE_MODELS_CONFIG:
+            continue
+        has_prediction = any(
+            (model_dir / cid / primary_fname).is_file()
+            and (model_dir / cid / followup_fname).is_file()
+            for cid in case_ids
+        )
+        has_score = any((score_root / name / cid / score_fname).is_file() for cid in case_ids)
+        if has_prediction and has_score:
+            active.append(name)
+    return active
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -572,7 +592,8 @@ def main():
     ap = argparse.ArgumentParser(description="Build diagnosis ranking features (follow-up stage).")
     ap.add_argument("--query_root", required=True)
     ap.add_argument("--out_dir", required=True)
-    ap.add_argument("--gt_root", required=True)
+    ap.add_argument("--score_root", required=True,
+                    help="Root containing per-model LLM-judge score files")
     ap.add_argument("--primary_models_root", required=True)
     ap.add_argument("--semantic_model", default="pritamdeka/S-PubMedBert-MS-MARCO")
     ap.add_argument("--num_gpus", type=int, default=1,
@@ -580,11 +601,14 @@ def main():
     ap.add_argument("--workers", type=int, default=4,
                     help="Number of parallel worker processes (each loads a model copy; "
                          "keep <= 2 * num_gpus to avoid GPU OOM)")
-    ap.add_argument("--ontology_path", default="orphanet_hierarchy.json")
-    ap.add_argument("--train_ids", default="dataset/train.json")
-    ap.add_argument("--test_ids", default="dataset/test.json")
+    ap.add_argument("--ontology_path", default="rare_diagnosis/training/orphanet_hierarchy.json")
+    ap.add_argument("--train_ids", required=True)
+    ap.add_argument("--test_ids", required=True)
     ap.add_argument("--primary_fname", default="most_likely_diagnosis_orphacode.json")
-    ap.add_argument("--gt_fname", default="primary_diagnosis_score.json")
+    ap.add_argument("--followup_fname", default="followup_diagnosis_orphacode.json")
+    ap.add_argument("--score_fname", default="followup_diagnosis_score.json")
+    ap.add_argument("--models", default="",
+                    help="Comma-separated model tags to consider (default: discover from roots)")
     args = ap.parse_args()
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
@@ -595,7 +619,16 @@ def main():
 
     train_ids = load_ids(args.train_ids)
     test_ids = load_ids(args.test_ids)
-    avail_models = sorted(d.name for d in Path(args.primary_models_root).iterdir() if d.is_dir())
+    all_ids = sorted(set(train_ids + test_ids))
+    requested_models = [m.strip() for m in args.models.split(",") if m.strip()]
+    avail_models = discover_active_models(
+        Path(args.primary_models_root), Path(args.score_root), all_ids,
+        args.primary_fname, args.followup_fname, args.score_fname, requested_models,
+    )
+    if not avail_models:
+        raise SystemExit("No active follow-up diagnosis models with predictions and judge scores.")
+    all_headers = BASE_HEADERS + build_model_headers(avail_models)
+    logger.info("Active models (%d): %s", len(avail_models), avail_models)
     args_dict = vars(args)
 
     def run_split(split, ids):
@@ -606,7 +639,7 @@ def main():
 
         f_csv = open(f_path, "w", newline="", encoding="utf-8")
         g_csv = open(g_path, "w", newline="", encoding="utf-8")
-        w_f = csv.DictWriter(f_csv, fieldnames=ALL_HEADERS, extrasaction="ignore")
+        w_f = csv.DictWriter(f_csv, fieldnames=all_headers, extrasaction="ignore")
         w_g = csv.DictWriter(g_csv, fieldnames=GROUP_HEADERS, extrasaction="ignore")
         w_f.writeheader()
         w_g.writeheader()

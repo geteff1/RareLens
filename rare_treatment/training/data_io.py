@@ -83,7 +83,8 @@ def clip_score_1_to_5(v: Any) -> float:
 # Data I/O
 # ---------------------------------------------------------------------------
 
-IGNORE_COLS = {
+# Row identifiers and text fields kept in the CSV for grouping and reporting.
+ROW_META_COLS = {
     "case_id",
     "candidate_key",
     "treatment_type",
@@ -95,13 +96,49 @@ IGNORE_COLS = {
     "label",
 }
 
+# Analysis/supervision columns are deliberately retained in the generated CSV,
+# but are not model inputs.  In particular, ``pos_count_union`` is derived from
+# positive labels and must not enter training.  The support/rank summaries were
+# not used by the leakage-safe 50-feature Treatment model schema.
+ANALYSIS_META_COLS = {
+    "pos_count_union",
+    "model_support_weight_sum",
+    "model_support_weight_ratio",
+    "model_support_weight_mean",
+    "model_support_weight_max",
+    "topk_support_count",
+    "topk_support_ratio",
+    "rank_min",
+    "rank_max",
+    "rank_mean",
+    "rank_median",
+    "rank_top1_count",
+    "rank_top3_count",
+    "rank_top5_count",
+    "imp_min",
+    "imp_max",
+    "imp_std",
+    "w_mean_rank",
+}
+
+META_COLS = ROW_META_COLS | ANALYSIS_META_COLS
+META_PREFIXES = ("feat_eval_",)
+
+# Kept as a compatibility alias for callers that imported the old name.
+IGNORE_COLS = META_COLS
+
+
+def is_model_feature_column(column: str) -> bool:
+    """Return whether a CSV column is eligible as an XGBoost input feature."""
+    return column not in META_COLS and not column.startswith(META_PREFIXES)
+
 
 def load_features_csv(path: Path) -> Tuple[pd.DataFrame, List[str]]:
     """Load feature CSV and infer model feature columns."""
     df = pd.read_csv(path, low_memory=False, dtype={"case_id": "string"})
     if "case_id" in df.columns:
         df["case_id"] = df["case_id"].astype(str)
-    feat_cols = [c for c in df.columns if c not in IGNORE_COLS]
+    feat_cols = [c for c in df.columns if is_model_feature_column(c)]
     return df, feat_cols
 
 

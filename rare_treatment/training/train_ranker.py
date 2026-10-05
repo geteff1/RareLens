@@ -365,6 +365,8 @@ def main() -> None:
     parser.add_argument("--data-dir", required=True,
                         help="Dir with features_train.csv and features_test.csv")
     parser.add_argument("--out-dir", required=True, help="Output directory")
+    parser.add_argument("--results-dir", default=None,
+                        help="Directory for ranked test predictions (default: <out-dir>/results)")
     parser.add_argument("--n-splits", type=int, default=5,
                         help="Number of GroupKFold splits")
     parser.add_argument("--target-k", type=int, default=3,
@@ -390,7 +392,9 @@ def main() -> None:
 
     data_dir = Path(args.data_dir)
     out_dir = Path(args.out_dir)
+    results_dir = Path(args.results_dir) if args.results_dir else out_dir / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     df_train, feat_cols = load_features_csv(data_dir / "features_train.csv")
     df_test, _ = load_features_csv(data_dir / "features_test.csv")
@@ -454,15 +458,25 @@ def main() -> None:
     logger.info("Test Hit@1=%.2f%% Hit@3=%.2f%% Hit@5=%.2f%% MRR=%.4f",
                 tm["hit@1"] * 100, tm["hit@3"] * 100, tm["hit@5"] * 100, tm["mrr"])
 
-    save_predictions_csv(df_test, final_scores, out_dir / "test_predictions_ensemble.csv", score_col="ensemble_score")
-    export_ranked_json(df_test, final_scores, out_dir / "ranked_results.json", score_col="ensemble_score")
+    save_predictions_csv(
+        df_test,
+        final_scores,
+        results_dir / "test_predictions_ensemble.csv",
+        score_col="ensemble_score",
+    )
+    export_ranked_json(
+        df_test,
+        final_scores,
+        results_dir / "ranked_results.json",
+        score_col="ensemble_score",
+    )
 
 
     fi_path = out_dir / "feature_importance_ensemble.csv"
     fi_df = pd.DataFrame({"feature": feat_cols, "importance": avg_importance})
     fi_df.sort_values(by="importance", ascending=False).to_csv(fi_path, index=False)
 
-    logger.info("Finished. Results saved to %s", out_dir)
+    logger.info("Finished. Models saved to %s; ranked results saved to %s", out_dir, results_dir)
 
     feat_used_path = out_dir / "feature_columns_used.txt"
     with feat_used_path.open("w", encoding="utf-8") as f:

@@ -1,15 +1,15 @@
 """
-Offline stacking inference: load bundle pkl, build features for each case, write S1 CSV.
+Offline stacking inference: load bundle pkl, build features for each case, write result CSV.
 
 Usage:
     python -m rare_prognosis.training.infer_models \\
-        --rareprognosis-root prog_out/Output_prog/RarePrognosis \\
-        --models-root prog_out \\
-        --train-ids prog_out/Output_prog/RarePrognosis/train_case_ids.json \\
-        --test-ids prog_out/Output_prog/RarePrognosis/test_case_ids.json \\
-        --models-dir rare_prognosis/models
+        --results-root outputs/prognosis_demo/results \\
+        --models-root outputs/prognosis_demo/llm_outputs \\
+        --train-ids outputs/prognosis_demo/splits/train.json \\
+        --test-ids outputs/prognosis_demo/splits/test.json \\
+        --models-dir outputs/prognosis_demo/model
 
-Add --no-write to only evaluate without overwriting the S1 CSVs.
+Add --no-write to only evaluate without overwriting the result CSVs.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from data_io import TASK_CONFIGS, load_json, load_s1_csv, get_nested, normalize_label
+from data_io import TASK_CONFIGS, load_json, load_result_csv, get_nested, normalize_label
 from ensemble_utils import encode_features, extract_text_features
 
 
@@ -151,7 +151,7 @@ def _build_features_for_case(
     return row
 
 
-def _write_s1_csv(path: Path, rows: List[Dict]) -> None:
+def _write_result_csv(path: Path, rows: List[Dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(
@@ -171,7 +171,7 @@ def _write_s1_csv(path: Path, rows: List[Dict]) -> None:
 def infer_task(
     *,
     task: str,
-    rare_root: Path,
+    results_root: Path,
     models_root: Path,
     models_dir: Path,
     train_ids: List[str],
@@ -179,17 +179,17 @@ def infer_task(
     no_write: bool,
 ) -> None:
     spec = TASK_CONFIGS[task]
-    s1_csv = rare_root / spec.s1_csv[0] / spec.s1_csv[1]
+    result_path = results_root / spec.result_csv[0] / spec.result_csv[1]
     bundle_path = models_dir / spec.bundle
 
-    if not s1_csv.is_file():
-        raise SystemExit(f"[{task}] missing S1 csv: {s1_csv}")
+    if not result_path.is_file():
+        raise SystemExit(f"[{task}] missing result csv: {result_path}")
     if not bundle_path.is_file():
         raise SystemExit(f"[{task}] missing bundle: {bundle_path}")
 
-    s1 = load_s1_csv(s1_csv, task)
-    split_by = s1.split_by_id
-    gt_by = s1.gt_by_id
+    result = load_result_csv(result_path, task)
+    split_by = result.split_by_id
+    gt_by = result.gt_by_id
     task_train = [cid for cid in train_ids if cid in gt_by]
     task_test = [cid for cid in test_ids if cid in gt_by]
     all_ids = task_train + task_test
@@ -276,8 +276,8 @@ def infer_task(
             case_id=cid, split=sp, prediction=pred, gt=gt,
             correct=correct, method=bundle_path.stem,
         ))
-    _write_s1_csv(s1_csv, out_rows)
-    logger.info("[OK] wrote: %s", s1_csv)
+    _write_result_csv(result_path, out_rows)
+    logger.info("[OK] wrote: %s", result_path)
 
 
 # ---------------------------------------------------------------------------
@@ -286,12 +286,14 @@ def infer_task(
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Prognosis stacking offline inference.")
-    p.add_argument("--rareprognosis-root", default="prog_out/Output_prog/RarePrognosis")
-    p.add_argument("--models-root", default="prog_out")
-    p.add_argument("--train-ids", default="prog_out/Output_prog/RarePrognosis/train_case_ids.json")
-    p.add_argument("--test-ids", default="prog_out/Output_prog/RarePrognosis/test_case_ids.json")
-    p.add_argument("--models-dir", default="rare_prognosis/models")
-    p.add_argument("--no-write", action="store_true", help="Only evaluate, do not overwrite S1 CSVs")
+    p.add_argument("--results-root", required=True,
+                   help="Directory containing task result CSVs")
+    p.add_argument("--models-root", required=True,
+                   help="Root containing per-model LLM prognosis outputs")
+    p.add_argument("--train-ids", required=True)
+    p.add_argument("--test-ids", required=True)
+    p.add_argument("--models-dir", required=True)
+    p.add_argument("--no-write", action="store_true", help="Only evaluate, do not overwrite result CSVs")
     p.add_argument("--task", choices=("overall_outcome", "functional_status", "symptom_burden", "all"), default="all")
     args = p.parse_args()
 
@@ -304,7 +306,7 @@ def main() -> None:
     for task in tasks:
         infer_task(
             task=task,
-            rare_root=Path(args.rareprognosis_root),
+            results_root=Path(args.results_root),
             models_root=Path(args.models_root),
             models_dir=Path(args.models_dir),
             train_ids=train_ids,

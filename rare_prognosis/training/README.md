@@ -2,110 +2,137 @@
 
 ## Overview
 
-We provide the training pipeline for rare disease prognosis prediction, covering three sub-tasks: overall outcome, functional status, and symptom burden. For methodological details, please refer to the paper.
+RarePrognosis asks multiple LLMs to predict three long-term prognosis categories and trains a Gradient Boosting stacking ensemble:
 
-## Pipeline
-
-```
-Step 1: LLM Generation       →  prognosis_prediction_output.json per model per case
-Step 2: Data Preparation     →  S1 CSVs, model directories, train/test splits
-Step 3: Feature Engineering  →  features.{train,test}.csv per sub-task
-Step 4: Training             →  GBDT stacking models (.pkl)
-Step 5: Inference            →  Predictions written to S1 CSVs
+```text
+case data
+  -> multi-LLM prognosis generation
+  -> categorical and explanation features
+  -> stratified Gradient Boosting models
+  -> fold-averaged inference
 ```
 
-## Quick Start
+The three tasks are `overall_outcome`, `functional_status`, and `symptom_burden`.
 
-Generate the LLM predictions first (Step 1), then prepare data, build features,
-train, and infer. Ground-truth labels come from each case's `prognosis_new.json`
-under `--case-root`.
+## Code Demo
+
+### 1. Configure LLM endpoints
+
+Copy `llm_config.example.json` to `llm_config.json` and replace the endpoint and key placeholders. All LLM calls made by the demo scripts read model names, endpoints, and credentials from this JSON file.
+
+The Prognosis ensemble uses these 12 model tags:
+
+```text
+Claude-Haiku-4.5, DeepSeek-R1, DeepSeek-V3.2-exp,
+Gemini-2.5-Flash, GPT-3.5-Turbo, GPT-4o-mini, GPT-5, o3-mini,
+Qwen3-14B, Qwen3-235B-Instruct, Qwen3-32B, Qwen3-8B
+```
+
+### 2. Run the 10-case demo
+
+Run commands from the repository root. The scripts deterministically select 10 eligible cases from `data_500` with seed 42, use 8 for training and 2 for testing, generate fresh LLM predictions, and execute the complete training pipeline.
+
+Windows PowerShell:
+
+```powershell
+.\rare_prognosis\training\reproduce_prognosis.ps1 `
+  -Python .\.venv\Scripts\python.exe `
+  -Models "Claude-Haiku-4.5,DeepSeek-R1,DeepSeek-V3.2-exp,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B"
+```
+
+macOS / Linux / WSL Bash:
+
+Create the environment on that machine first; a `.venv` copied from Windows cannot run on macOS or Linux.
 
 ```bash
-bash rare_prognosis/training/run_pipeline.sh \
-    --python /path/to/python \
-    --case-root /data/case_output \
-    --llm-root /data/llm \
-    --train-ids /data/splits/train.json \
-    --test-ids /data/splits/test.json \
-    --cv-folds 5
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+bash rare_prognosis/training/reproduce_prognosis.sh \
+  --python .venv/bin/python \
+  --models Claude-Haiku-4.5,DeepSeek-R1,DeepSeek-V3.2-exp,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B
 ```
 
-| Flag | Holds |
-| --- | --- |
-| `--case-root` | cases with GT labels (`<case>/prognosis_new.json`) |
-| `--llm-root`  | per-model LLM predictions (`<model>/<case>/prognosis_prediction_output.json`) |
 
+## Step-by-Step Reproduction
 
+The commands below are the authoritative workflow for a user-provided cohort.
 
-## Step-by-Step Usage
+```text
+<CASE_ROOT>        case directories containing prognosis inputs and labels
+<SPLIT_ROOT>       train.json, test.json, and all.json
+<LLM_OUTPUT_ROOT>  per-model generated prognosis JSON files
+<FEATURE_ROOT>     generated feature CSVs
+<MODEL_ROOT>       trained stacking model bundles
+<RESULT_ROOT>      task-specific result.csv files
+```
 
-### Step 1: LLM Generation
+### Step 0: Prepare cases and splits
 
-[`generate_llm_outputs.py`](generate_llm_outputs.py) calls one model per invocation
-and writes `<llm-root>/<model>/<case>/prognosis_prediction_output.json`.
+Every selected case must contain:
 
-The Prognosis ensemble uses these 12 model/output-directory identifiers:
+```text
+<CASE_ROOT>/<case_id>/prognosis_prediction.json
+<CASE_ROOT>/<case_id>/prognosis_new.json
+```
 
-`Claude-Haiku-4.5`, `DeepSeek-R1`, `DeepSeek-V3.2-exp`,
-`Gemini-2.5-Flash`, `GPT-3.5-Turbo`, `GPT-4o-mini`, `GPT-5`, `o3-mini`,
-`Qwen3-14B`, `Qwen3-235B-Instruct`, `Qwen3-32B`, and `Qwen3-8B`.
+`<SPLIT_ROOT>/train.json` and `test.json` must be disjoint JSON arrays of case IDs. Create `all.json` as their de-duplicated union. Use a case-level split so records from one patient cannot cross partitions.
+
+### Step 1: Generate prognosis predictions
+
+Run once per model tag. `--model` may be either a `model` value or a tag defined in `llm_config.json`; the endpoint and credentials are loaded from that file.
 
 ```bash
 python -m rare_prognosis.training.generate_llm_outputs \
-    /data/case_output /data/llm \
-    --model MODEL_NAME \
-    --config llm_config.json
+  <CASE_ROOT> <LLM_OUTPUT_ROOT> \
+  --model MODEL_TAG \
+  --config llm_config.json \
+  --case-ids <SPLIT_ROOT>/all.json
 ```
 
-Replace `MODEL_NAME` with each required ensemble identifier listed above. It
-must match either a `model` value or an entry in `tags` in `llm_config.json`.
+Each result is written to `<LLM_OUTPUT_ROOT>/MODEL_TAG/<case_id>/prognosis_prediction_output.json`.
 
-### Step 2: Data Preparation
-
-[`prepare_data.py`](prepare_data.py) converts raw case outputs and LLM predictions into S1-format CSVs and the directory structure expected by downstream scripts.
+### Step 2: Prepare the data
 
 ```bash
 python -m rare_prognosis.training.prepare_data \
-    --case-root /data/case_output \
-    --llm-root /data/llm \
-    --out-dir /data/prepared
+  --case-root <CASE_ROOT> \
+  --llm-root <LLM_OUTPUT_ROOT> \
+  --result-root <RESULT_ROOT> \
+  --train-ids <SPLIT_ROOT>/train.json \
+  --test-ids <SPLIT_ROOT>/test.json
 ```
 
-### Step 3: Feature Engineering
-
-[`build_features.py`](build_features.py) constructs stacking features from multi-model outputs.
+### Step 3: Build features
 
 ```bash
 python -m rare_prognosis.training.build_features \
-    --rareprognosis-root /data/prepared/rareprognosis \
-    --models-root /data/prepared/models \
-    --train-ids /data/prepared/dataset/train_case_ids.json \
-    --test-ids /data/prepared/dataset/test_case_ids.json \
-    --out-dir /data/prepared/features
+  --results-root <RESULT_ROOT> \
+  --models-root <LLM_OUTPUT_ROOT> \
+  --train-ids <SPLIT_ROOT>/train.json \
+  --test-ids <SPLIT_ROOT>/test.json \
+  --out-dir <FEATURE_ROOT>
 ```
 
-### Step 4: Training
-
-[`train_models.py`](train_models.py) trains a `GradientBoostingClassifier` per sub-task with 5-fold StratifiedKFold OOF evaluation. 
+### Step 4: Train the models
 
 ```bash
 python -m rare_prognosis.training.train_models \
-    --features-dir /data/prepared/features \
-    --out-dir /data/prepared/trained_models \
-    --seed 42 \
-    --cv-folds 5
+  --features-dir <FEATURE_ROOT> \
+  --out-dir <MODEL_ROOT> \
+  --seed 42 \
+  --cv-folds 5
 ```
 
-### Step 5: Inference
-
-[`infer_models.py`](infer_models.py) loads trained model bundles, builds per-case features, and writes averaged ensemble predictions to S1 CSVs.
+### Step 5: Run standalone inference
 
 ```bash
 python -m rare_prognosis.training.infer_models \
-    --rareprognosis-root /data/prepared/rareprognosis \
-    --models-root /data/prepared/models \
-    --train-ids /data/prepared/dataset/train_case_ids.json \
-    --test-ids /data/prepared/dataset/test_case_ids.json \
-    --models-dir /data/prepared/trained_models
+  --results-root <RESULT_ROOT> \
+  --models-root <LLM_OUTPUT_ROOT> \
+  --train-ids <SPLIT_ROOT>/train.json \
+  --test-ids <SPLIT_ROOT>/test.json \
+  --models-dir <MODEL_ROOT>
 ```
 
+Predictions and exact normalized-label correctness are written to `result.csv` in each task directory under `<RESULT_ROOT>`.

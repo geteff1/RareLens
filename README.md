@@ -4,8 +4,6 @@
 
 ## Overview
 
----
-
 RareLens is an AI framework designed to support rare-disease care across the clinical journey, from **early risk alerting and diagnosis to treatment planning and prognosis**. By formulating rare-disease care as a multi-stage decision process, RareLens leverages divergent reasoning from heterogeneous large language models and aligns their outputs for task-specific clinical decision-making.
 
 This repository is intended only for reproducing the model of the four RareLens modules—**RareAlert, RareDiagnosis, RareTreatment, and RarePrognosis**—together with a 500-case demonstration subset of RareLensBench.  
@@ -14,13 +12,11 @@ This repository is intended only for reproducing the model of the four RareLens 
 
 ## Web Application
 
----
 
 For the full end-to-end clinical pipeline, we strongly recommend using our pre-deployed [RareLens web application](https://www.rarelens.org/) for easy access and testing, without any local setup or LLM API keys.
 
 ## Demo
 
----
 <table>
   <tr>
     <td width="50%" valign="top">
@@ -61,8 +57,6 @@ For the full end-to-end clinical pipeline, we strongly recommend using our pre-d
 
 ## Modules
 
----
-
 RareLens spans four stages of the rare-disease clinical workflow — risk alerting, diagnosis, treatment, and prognosis — implemented as separate task-specific modules.
 
 
@@ -77,8 +71,6 @@ RareLens spans four stages of the rare-disease clinical workflow — risk alerti
 The following sections provide instructions for reproducing the model training reported in the paper.
 
 ## System Requirements
-
----
 
 
 
@@ -101,15 +93,13 @@ Verified environment: Python 3.10, torch 2.7.1+cu118, transformers 4.57.3, sente
 
 ## LLM Configuration
 
----
-
 RareLens uses OpenAI-compatible endpoints for LLM inference. **RareAlert** runs with a fine-tuned Qwen3-32B model, while **RareDiagnosis, RareTreatment, and RarePrognosis** use outputs generated from multiple LLMs for downstream machine-learning pipelines.
 
 Endpoints can be configured with `--base-url`, `--api-key`, and `--model`, or through a JSON configuration file. Local models can also be served with frameworks such as vLLM, Ollama, or SGLang.
 
-## Installation
+For the code demos, configure `llm_config.json` following the format in `llm_config.example.json` and fill in the endpoint credentials you intend to use.
 
----
+## Installation
 
 1. **Clone the repository:**
   ```bash
@@ -134,24 +124,24 @@ Endpoints can be configured with `--base-url`, `--api-key`, and `--model`, or th
    python -m pip install --upgrade pip
    python -m pip install -r requirements.txt
   ```
-5. **(Optional) Pre-cache feature-engineering models.** The Diagnosis and Treatment feature builders download these from HuggingFace on first run (Prognosis needs none):
+5. **(Optional) Pre-cache local models.** The Diagnosis and Treatment feature builders, plus optional Diagnosis OrphaCode RAG, download these from HuggingFace on first run (Prognosis needs none):
 
-  | Used by              | Model                                | Purpose                                |
-  | -------------------- | ------------------------------------ | -------------------------------------- |
-  | Diagnosis, Treatment | `pritamdeka/S-PubMedBert-MS-MARCO`   | semantic similarity embeddings         |
-  | Treatment            | `cross-encoder/nli-deberta-v3-large` | NLI entailment (needs `sentencepiece`) |
+  | Used by | Model | Purpose |
+  | --- | --- | --- |
+  | Diagnosis, Treatment | `pritamdeka/S-PubMedBert-MS-MARCO` | feature semantic-similarity embeddings |
+  | Diagnosis (OrphaCode RAG) | `BAAI/bge-base-en-v1.5` | OrphaCode candidate retrieval and query embeddings; must match the vector-cache embedding model |
+  | Diagnosis (OrphaCode RAG) | `ncbi/MedCPT-Cross-Encoder` | retrieved OrphaCode candidate reranking |
+  | Treatment | `cross-encoder/nli-deberta-v3-large` | NLI entailment (needs `sentencepiece`) |
 
 
 **Typical installation time:** The basic CPU installation takes approximately 10 minutes.
 
 ## Dataset
 
----
-
 For reproducibility, we release a 500-case demo subset (`[data_500/](data_500/)`) of the full RarelensBench used in our experiments. See `[data_500/README.md](data_500/README.md)` for format details.
 
 ## Code Demo
----
+
 A 500-case subset of RareLensBench is provided in `[data_500/](data_500/)` for small-scale testing and reproducibility checks.
 
 For module-specific execution instructions, see:
@@ -176,8 +166,6 @@ A successful run produces module-specific prediction outputs:
 
 ## Reproduction
 
----
-
 Module-specific training and inference instructions are provided in the corresponding documentation:
 
 
@@ -191,13 +179,11 @@ Module-specific training and inference instructions are provided in the correspo
 
 These guides describe the required inputs, LLM generation or model serving, feature construction, model training, and inference procedures for each module.
 
-> **Note:** The evaluation protocol and LLM judges used to generate the ranking scores for RareDiagnosis and RareTreatment are described in the paper. The corresponding evaluation/judge code is not included in this repository.
+> **Note:** Reproducing the metrics reported in the paper requires the complete cohort and the original train/test splits, which are not included in this demo subset. The evaluation metrics and LLM-based judging procedures should be reimplemented following the protocols described in the paper.
 
 
 
 ## Citation
-
----
 
 ```bibtex
 @article{chen2026rarelens,
@@ -213,12 +199,8 @@ These guides describe the required inputs, LLM generation or model serving, feat
 
 ## Acknowledgements
 
----
-
 We gratefully acknowledge the developers and contributors of the public rare-disease datasets, clinical resources, foundation models, and open-source tools that supported the development and evaluation of RareLens.
 
 ## License
-
----
 
 This project is released under the Apache License 2.0. See `[LICENSE](LICENSE)` for details.

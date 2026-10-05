@@ -26,9 +26,15 @@ htmlcov/
 
 # ---------- Virtual envs ----------
 .venv/
+.venv-backup-*/
 venv/
 env/
 ENV/
+
+# Local Python/tool caches
+/.python/
+/.tmp/
+/.uv-cache/
 
 # ---------- IDE ----------
 .idea/
@@ -68,3 +74,6 @@ reproduce_module/
 # ---------- Reference / misc ----------
 2601.18132v1.pdf
 README_ref.md
+/TODO.md
+/requirements copy.txt
+/nr-software-policy_finished.pdf

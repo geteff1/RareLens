@@ -126,12 +126,34 @@ def load_model_config(config_path: str, model_tag: str) -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         config_list = json.load(f)
 
-    for cfg in config_list:
-        if model_tag in cfg.get("tags", []):
-            return cfg
-    for cfg in config_list:
-        if cfg.get("model") == model_tag:
-            return cfg
+    selected = next(
+        (cfg for cfg in config_list if model_tag in cfg.get("tags", [])),
+        None,
+    )
+    if selected is None:
+        selected = next(
+            (cfg for cfg in config_list if cfg.get("model") == model_tag),
+            None,
+        )
+    if selected is not None:
+        selected = dict(selected)
+        credential_tag = selected.get("credentials_from")
+        if credential_tag:
+            source = next(
+                (
+                    cfg for cfg in config_list
+                    if credential_tag == cfg.get("model")
+                    or credential_tag in cfg.get("tags", [])
+                ),
+                None,
+            )
+            if source is None:
+                raise ValueError(
+                    f"Credential source '{credential_tag}' not found in {config_path}."
+                )
+            selected.setdefault("base_url", source.get("base_url"))
+            selected.setdefault("api_key", source.get("api_key"))
+        return selected
 
     raise ValueError(f"Model '{model_tag}' not found in {config_path}.")
 
@@ -143,7 +165,7 @@ def get_completion(
     prompt: str,
     model: str,
     *,
-    temperature: float = 0,
+    temperature: float = 0.0,
     max_retries: int = 10,
     delay: float = 2.0,
     stream: bool = False,
@@ -234,9 +256,10 @@ def process_case(
     client: OpenAI,
     model: str,
     *,
-    temperature: float = 0,
+    temperature: float = 0.0,
     max_retries: int = 10,
     stream: bool = False,
+    dry_run: bool = False,
 ) -> bool:
     relative_path = os.path.relpath(case_path, input_base)
     output_case_path = os.path.join(output_base, relative_path)
@@ -262,6 +285,15 @@ def process_case(
         return False
 
     full_prompt = TREATMENT_PLAN_PROMPT.format(content=aggregated_content)
+    if dry_run:
+        logger.info(
+            "[dry-run] case '%s': input keys=%s, prompt_len=%d",
+            relative_path,
+            list(data.keys()) if isinstance(data, dict) else [],
+            len(full_prompt),
+        )
+        return True
+
     response = get_completion(
         client, full_prompt, model,
         temperature=temperature,
@@ -304,7 +336,7 @@ def main():
     )
     parser.add_argument("input_folder", help="Input folder containing case subfolders with treatment_plan.json")
     parser.add_argument("output_folder", help="Output folder where results will be saved")
-    parser.add_argument("--model", default="qwen3-32b",
+    parser.add_argument("--model", required=True,
                         help="Model name/tag (e.g., qwen3-32b, gpt-4o, claude-3-5-haiku-20241022, deepseek-r1)")
     parser.add_argument("--base-url", default=None,
                         help="OpenAI-compatible API base URL (direct mode)")
@@ -313,6 +345,8 @@ def main():
     parser.add_argument("--config", default=None,
                         help="Path to JSON config list (config mode). "
                              "Each entry: {model, base_url, api_key, tags}")
+    parser.add_argument("--case-ids", default=None,
+                        help="Optional JSON array of case IDs to process")
     parser.add_argument("--num-workers", type=int, default=10,
                         help="Number of concurrent threads (1 = sequential)")
     parser.add_argument("--max-iterations", type=int, default=20,
@@ -322,35 +356,53 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--stream", action="store_true",
                         help="Use streaming API (needed for some models)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Parse selected inputs and build prompts without calling the LLM")
     args = parser.parse_args()
 
     if not os.path.exists(args.input_folder):
         logger.error("Input folder '%s' does not exist.", args.input_folder)
         sys.exit(1)
 
-    # Initialize OpenAI client
-    if args.config:
-        model_cfg = load_model_config(args.config, args.model)
-        client = OpenAI(
-            base_url=model_cfg.get("base_url"),
-            api_key=model_cfg.get("api_key"),
-        )
-        model_name = model_cfg.get("model", args.model)
-    elif args.base_url and args.api_key:
-        client = OpenAI(base_url=args.base_url, api_key=args.api_key)
-        model_name = args.model
-    else:
-        logger.error("Provide either --config or both --base-url and --api-key.")
-        sys.exit(1)
+    # Initialize OpenAI client (not needed for dry-run).
+    client = None
+    model_name = args.model
+    if not args.dry_run:
+        if args.config:
+            model_cfg = load_model_config(args.config, args.model)
+            client = OpenAI(
+                base_url=model_cfg.get("base_url"),
+                api_key=model_cfg.get("api_key"),
+            )
+            model_name = model_cfg.get("model", args.model)
+        elif args.base_url and args.api_key:
+            client = OpenAI(base_url=args.base_url, api_key=args.api_key)
+        else:
+            logger.error("Provide either --config or both --base-url and --api-key.")
+            sys.exit(1)
 
     output_folder = os.path.join(args.output_folder, args.model)
     os.makedirs(output_folder, exist_ok=True)
 
-    # Gather all case directories
+    selected_case_ids = None
+    if args.case_ids:
+        with open(args.case_ids, "r", encoding="utf-8") as f:
+            selected_case_ids = {str(x) for x in json.load(f)}
+
+    # Gather selected eligible case directories.
     all_cases = []
     for root, dirs, files in os.walk(args.input_folder):
-        if "treatment_plan.json" in files:
+        case_id = os.path.basename(root)
+        if (
+            "treatment_plan.json" in files
+            and (selected_case_ids is None or case_id in selected_case_ids)
+        ):
             all_cases.append(root)
+    all_cases.sort()
+
+    if not all_cases:
+        logger.warning("No selected treatment cases found under %s", args.input_folder)
+        return
 
     worker_count = max(1, args.num_workers)
 
@@ -373,6 +425,7 @@ def main():
                         temperature=args.temperature,
                         max_retries=args.max_retries,
                         stream=args.stream,
+                        dry_run=args.dry_run,
                     )
                     pbar.update(1)
             else:
@@ -386,6 +439,7 @@ def main():
                             temperature=args.temperature,
                             max_retries=args.max_retries,
                             stream=args.stream,
+                            dry_run=args.dry_run,
                         )
                         future_to_case[future] = case_path
 
@@ -397,6 +451,10 @@ def main():
                             logger.error("Error processing case '%s': %s",
                                          os.path.relpath(case_path, args.input_folder), e)
                         pbar.update(1)
+
+        if args.dry_run:
+            logger.info("Dry run complete; no output files were written.")
+            return
 
         remaining = collect_pending_cases(all_cases, args.input_folder, output_folder)
         if not remaining:

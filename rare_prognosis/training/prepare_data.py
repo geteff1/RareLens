@@ -9,17 +9,16 @@ Inputs:
   - case_root/<case_id>/prognosis_new.json  (GT labels)
   - llm/<model>/<case_id>/prognosis_prediction_output.json
 
-Outputs (into --out-dir):
-  rareprognosis/{overall,functional,symptom}/S1_*.csv
-  models/<model>/<case_id>/prognosis_prediction_output.json
-  dataset/train_case_ids.json
-  dataset/test_case_ids.json
+Outputs (into --result-root):
+  {overall,functional,symptom}/result.csv
 
 Usage:
     python prepare_data.py \\
         --case-root data_500 \\
-        --llm-root data_demo/pipeline_data/prognoisis/llm \\
-        --out-dir data_demo/pipeline_data/prognoisis/prepared
+        --llm-root outputs/prognosis_demo/llm_outputs \\
+        --result-root outputs/prognosis_demo/results \\
+        --train-ids outputs/prognosis_demo/splits/train.json \\
+        --test-ids outputs/prognosis_demo/splits/test.json
 """
 from __future__ import annotations
 
@@ -27,7 +26,6 @@ import argparse
 import csv
 import json
 import logging
-import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -75,20 +73,21 @@ def _load_gt_from_prognosis_new(
     return gt
 
 
-def _write_s1_csv(
+def _write_result_csv(
     path: Path,
-    case_ids: List[str],
+    train_ids: List[str],
+    test_ids: List[str],
     gt: Dict[str, str],
-    split: str,
 ) -> None:
-    """Write an S1-format CSV with case_id, split, prediction(empty), gt, correct, method."""
+    """Write a result CSV with case_id, split, prediction(empty), gt, correct, method."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["case_id", "split", "prediction", "gt", "correct", "method"])
-        for cid in case_ids:
-            label = gt.get(cid, "")
-            w.writerow([cid, split, "", label, "", ""])
+        for split, case_ids in (("train", train_ids), ("test", test_ids)):
+            for cid in case_ids:
+                label = gt.get(cid, "")
+                w.writerow([cid, split, "", label, "", ""])
 
 
 def main() -> None:
@@ -97,13 +96,20 @@ def main() -> None:
                         help="Root of case data (contains <case_id>/prognosis_new.json)")
     parser.add_argument("--llm-root", required=True,
                         help="Root of LLM outputs (contains <model>/<case_id>/prognosis_prediction_output.json)")
-    parser.add_argument("--out-dir", required=True,
-                        help="Output directory for prepared pipeline data")
+    parser.add_argument("--result-root", required=True,
+                        help="Directory where task result CSVs are written")
+    parser.add_argument("--train-ids", default=None,
+                        help="Optional JSON array defining the training split")
+    parser.add_argument("--test-ids", default=None,
+                        help="Optional JSON array defining the test split")
     args = parser.parse_args()
+
+    if bool(args.train_ids) != bool(args.test_ids):
+        parser.error("--train-ids and --test-ids must be provided together")
 
     case_root = Path(args.case_root)
     llm_root = Path(args.llm_root)
-    out_dir = Path(args.out_dir)
+    result_root = Path(args.result_root)
 
     # Discover case IDs from LLM output dirs
     model_dirs = sorted([p for p in llm_root.iterdir() if p.is_dir()])
@@ -118,6 +124,22 @@ def main() -> None:
     case_ids = sorted(case_ids_set)
     if not case_ids:
         raise SystemExit("No case IDs found")
+
+    if args.train_ids:
+        with Path(args.train_ids).open("r", encoding="utf-8") as f:
+            train_ids = [str(x) for x in json.load(f)]
+        with Path(args.test_ids).open("r", encoding="utf-8") as f:
+            test_ids = [str(x) for x in json.load(f)]
+        overlap = set(train_ids) & set(test_ids)
+        if overlap:
+            raise SystemExit(f"Train/test overlap: {sorted(overlap)}")
+        missing = (set(train_ids) | set(test_ids)) - case_ids_set
+        if missing:
+            raise SystemExit(f"Split cases missing from LLM outputs: {sorted(missing)}")
+        case_ids = train_ids + test_ids
+    else:
+        train_ids = case_ids
+        test_ids = []
     logger.info("Found %d cases: %s", len(case_ids), case_ids)
     logger.info("Found %d models: %s", len(model_dirs), [m.name for m in model_dirs])
 
@@ -127,38 +149,14 @@ def main() -> None:
     for task in gt:
         logger.info("  [%s] GT labels: %d", task, len(gt[task]))
 
-    # 2. Create S1 CSVs under rareprognosis/
-    rare_root = out_dir / "rareprognosis"
+    # 2. Create initial result CSVs, one per prognosis task.
     for task, cfg in TASK_CONFIGS.items():
-        subdir, fname = cfg.s1_csv
-        s1_path = rare_root / subdir / fname
-        _write_s1_csv(s1_path, case_ids, gt[task], split="train")
-        logger.info("  S1 CSV: %s", s1_path)
+        subdir, fname = cfg.result_csv
+        result_path = result_root / subdir / fname
+        _write_result_csv(result_path, train_ids, test_ids, gt[task])
+        logger.info("  result CSV: %s", result_path)
 
-    # 3. Set up models dir: <out_dir>/models/<model>/<case_id>/prognosis_prediction_output.json
-    models_out = out_dir / "models"
-    for md in model_dirs:
-        for cid in case_ids:
-            src = md / cid / "prognosis_prediction_output.json"
-            if not src.is_file():
-                continue
-            dst_dir = models_out / md.name / cid
-            dst_dir.mkdir(parents=True, exist_ok=True)
-            dst = dst_dir / "prognosis_prediction_output.json"
-            if not dst.exists():
-                shutil.copy2(src, dst)
-    logger.info("Models output ready: %s", models_out)
-
-    # 4. Create train/test case ID JSONs
-    # For demo: all cases as both train and test (smoke test)
-    dataset_dir = out_dir / "dataset"
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-    with (dataset_dir / "train_case_ids.json").open("w", encoding="utf-8") as f:
-        json.dump(case_ids, f, indent=2)
-    with (dataset_dir / "test_case_ids.json").open("w", encoding="utf-8") as f:
-        json.dump(case_ids, f, indent=2)
-    logger.info("Dataset splits: %s (all %d cases as train+test)", dataset_dir, len(case_ids))
-    logger.info("Finished. Prepared data saved to %s", out_dir)
+    logger.info("Finished. Results saved to %s", result_root)
 
 
 if __name__ == "__main__":

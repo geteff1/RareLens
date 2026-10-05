@@ -30,8 +30,8 @@ class TaskConfig:
     expl_key: str = "explanation"   # key for explanation text
     # Label synonyms  {raw_lower: canonical}
     synonyms: Dict[str, str] = field(default_factory=dict)
-    # S1 CSV location  (subdir, filename)
-    s1_csv: Tuple[str, str] = ("", "")
+    # Result CSV location  (subdir, filename)
+    result_csv: Tuple[str, str] = ("", "")
     # Model bundle filename
     bundle: str = ""
 
@@ -52,7 +52,7 @@ TASK_CONFIGS: Dict[str, TaskConfig] = {
         pred_section="overall_outcome",
         pred_key="outcome_category",
         synonyms={"death": "terminal", "progressed": "progression"},
-        s1_csv=("overall", "S1_stacking_gbdt.csv"),
+        result_csv=("overall", "result.csv"),
         bundle="overall_outcome_C2_stacking_gbdt.pkl",
     ),
     "functional_status": TaskConfig(
@@ -62,7 +62,7 @@ TASK_CONFIGS: Dict[str, TaskConfig] = {
         pred_section="functional_status",
         pred_key="status",
         synonyms={},
-        s1_csv=("functional", "S1_stacking_gbdt.csv"),
+        result_csv=("functional", "result.csv"),
         bundle="functional_status_C2_stacking_gbdt.pkl",
     ),
     "symptom_burden": TaskConfig(
@@ -72,7 +72,7 @@ TASK_CONFIGS: Dict[str, TaskConfig] = {
         pred_section="symptom_burden",
         pred_key="burden",
         synonyms={},
-        s1_csv=("symptom", "S1_stacking_gbdt.csv"),
+        result_csv=("symptom", "result.csv"),
         bundle="symptom_burden_C2_stacking_gbdt.pkl",
     ),
 }
@@ -121,12 +121,12 @@ def normalize_label(label: Any, task: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# S1 CSV loading
+# Result CSV loading
 # ---------------------------------------------------------------------------
 
 @dataclass
-class S1Data:
-    """Parsed contents of an S1-format CSV."""
+class ResultData:
+    """Parsed contents of a prognosis result CSV."""
     train_ids: List[str]
     test_ids: List[str]
     gt_by_id: Dict[str, str]
@@ -134,8 +134,8 @@ class S1Data:
     split_by_id: Dict[str, str]
 
 
-def load_s1_csv(path: Path, task: str) -> S1Data:
-    """Load an S1 CSV and return all parsed fields."""
+def load_result_csv(path: Path, task: str) -> ResultData:
+    """Load a prognosis result CSV and return all parsed fields."""
     train_ids: List[str] = []
     test_ids: List[str] = []
     gt_by_id: Dict[str, str] = {}
@@ -158,7 +158,7 @@ def load_s1_csv(path: Path, task: str) -> S1Data:
             if cid not in seen:
                 seen.add(cid)
                 (train_ids if split == "train" else test_ids).append(cid)
-    return S1Data(
+    return ResultData(
         train_ids=train_ids,
         test_ids=test_ids,
         gt_by_id=gt_by_id,

@@ -567,7 +567,7 @@ def _call_llm_json(
                 {"role": "user", "content": prompt},
             ],
             max_tokens=1000,
-            temperature=0,
+            temperature=0.0,
             response_format={"type": "json_object"},
         )
         text = response.choices[0].message.content

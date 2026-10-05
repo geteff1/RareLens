@@ -10,12 +10,12 @@ Output: features.{train|test}.csv, groups.{train|test}.csv
 
 Usage:
     python build_features_primary.py \\
-        --query_root /data/query \\
-        --primary_models_root /data/models \\
-        --gt_root /data/gt \\
-        --out_dir /data/features/primary \\
-        --train_ids dataset/train.json \\
-        --test_ids dataset/test.json
+        --query_root data_500 \\
+        --primary_models_root outputs/diagnosis_demo_primary/llm_outputs \\
+        --score_root outputs/diagnosis_demo_primary/judge_scores \\
+        --out_dir outputs/diagnosis_demo_primary/features \\
+        --train_ids outputs/diagnosis_demo_primary/splits/train.json \\
+        --test_ids outputs/diagnosis_demo_primary/splits/test.json
 """
 from __future__ import annotations
 
@@ -50,22 +50,22 @@ except ImportError:
 
 ELITE_MODELS_CONFIG = {
     # Kings (high weight)
-    "gpt-5": 10.0,
+    "GPT-5": 10.0,
     "o3-mini": 8.0,
     # Knights (medium weight)
-    "gpt-3.5-turbo": 6.0,
-    "gemini-2.5-flash-preview-05-20-nothinking": 6.0,
-    "deepseek-r1-0528": 5.5,
-    "qwen3-235b-a22b-instruct-2507": 4.5,
-    "claude-haiku-4-5-20251001": 3.0,
+    "GPT-3.5-Turbo": 6.0,
+    "Gemini-2.5-Flash": 6.0,
+    "DeepSeek-R1": 5.5,
+    "Qwen3-235B-Instruct": 4.5,
+    "Claude-Haiku-4.5": 3.0,
     # Pawns (low weight)
-    "qwen3-8b": 1.0,
-    "qwen3-14b": 1.0,
-    "qwen3-32b": 1.0,
-    "gpt-4o-mini": 1.0,
+    "Qwen3-8B": 1.0,
+    "Qwen3-14B": 1.0,
+    "Qwen3-32B": 1.0,
+    "GPT-4o-mini": 1.0,
 }
 
-KINGS_LIST = ["gpt-5", "o3-mini"]
+KINGS_LIST = ["GPT-5", "o3-mini"]
 
 # ── Logging & regex ──────────────────────────────────────────────────────────
 
@@ -271,17 +271,17 @@ def process_single_case(
 
     # 2. Load ground truth (union of all score files, evaluation_score == 5)
     gt_positive_names: Set[str] = set()
-    gt_root_path = Path(args_dict["gt_root"])
+    gt_root_path = Path(args_dict["score_root"])
 
     score_files: List[Path] = []
-    direct = gt_root_path / case_id / args_dict["gt_fname"]
+    direct = gt_root_path / case_id / args_dict["score_fname"]
     if direct.is_file():
         score_files.append(direct)
     else:
         try:
             for item in gt_root_path.iterdir():
                 if item.is_dir():
-                    sub = item / case_id / args_dict["gt_fname"]
+                    sub = item / case_id / args_dict["score_fname"]
                     if sub.is_file():
                         score_files.append(sub)
         except Exception:
@@ -465,7 +465,7 @@ def process_single_case(
             **ont_feats,
         }
 
-        for mn in ELITE_MODELS_CONFIG:
+        for mn in target_models:
             if mn in cand["per_model"]:
                 info = cand["per_model"][mn]
                 row[f"rank__{mn}"] = info["rank"]
@@ -510,14 +510,41 @@ BASE_HEADERS = [
     "ont_depth", "ont_is_leaf", "ont_ancestor_match", "ont_num_parents",
 ]
 
-MODEL_HEADERS = [
-    f"{sfx}{mn}"
-    for mn in ELITE_MODELS_CONFIG
-    for sfx in ("rank__", "conf__", "hit__", "z_conf__", "r_sim__")
-]
-
-ALL_HEADERS = BASE_HEADERS + MODEL_HEADERS
 GROUP_HEADERS = ["split", "case_id", "candidate_count", "has_positive_label", "case_entropy"]
+
+
+def build_model_headers(model_names: List[str]) -> List[str]:
+    return [
+        f"{sfx}{mn}"
+        for mn in model_names
+        for sfx in ("rank__", "conf__", "hit__", "z_conf__", "r_sim__")
+    ]
+
+
+def discover_active_models(
+    models_root: Path,
+    score_root: Path,
+    case_ids: List[str],
+    primary_fname: str,
+    score_fname: str,
+    requested_models: Optional[List[str]] = None,
+) -> List[str]:
+    """Models with at least one generated prediction and one judge score."""
+    active: List[str] = []
+    if not models_root.is_dir():
+        return active
+    requested = set(requested_models or [])
+    for model_dir in sorted((p for p in models_root.iterdir() if p.is_dir()), key=lambda p: p.name):
+        name = model_dir.name
+        if requested and name not in requested:
+            continue
+        if name not in ELITE_MODELS_CONFIG:
+            continue
+        has_prediction = any((model_dir / cid / primary_fname).is_file() for cid in case_ids)
+        has_score = any((score_root / name / cid / score_fname).is_file() for cid in case_ids)
+        if has_prediction and has_score:
+            active.append(name)
+    return active
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -526,7 +553,8 @@ def main():
     ap = argparse.ArgumentParser(description="Build diagnosis ranking features (primary stage).")
     ap.add_argument("--query_root", required=True)
     ap.add_argument("--out_dir", required=True)
-    ap.add_argument("--gt_root", required=True)
+    ap.add_argument("--score_root", required=True,
+                    help="Root containing per-model LLM-judge score files")
     ap.add_argument("--primary_models_root", required=True)
     ap.add_argument("--semantic_model", default="pritamdeka/S-PubMedBert-MS-MARCO")
     ap.add_argument("--num_gpus", type=int, default=1,
@@ -534,11 +562,13 @@ def main():
     ap.add_argument("--workers", type=int, default=4,
                     help="Number of parallel worker processes (each loads a model copy; "
                          "keep <= 2 * num_gpus to avoid GPU OOM)")
-    ap.add_argument("--ontology_path", default="orphanet_hierarchy.json")
-    ap.add_argument("--train_ids", default="dataset/train.json")
-    ap.add_argument("--test_ids", default="dataset/test.json")
+    ap.add_argument("--ontology_path", default="rare_diagnosis/training/orphanet_hierarchy.json")
+    ap.add_argument("--train_ids", required=True)
+    ap.add_argument("--test_ids", required=True)
     ap.add_argument("--primary_fname", default="most_likely_diagnosis_orphacode.json")
-    ap.add_argument("--gt_fname", default="primary_diagnosis_score.json")
+    ap.add_argument("--score_fname", default="primary_diagnosis_score.json")
+    ap.add_argument("--models", default="",
+                    help="Comma-separated model tags to consider (default: discover from roots)")
     args = ap.parse_args()
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
@@ -549,7 +579,16 @@ def main():
 
     train_ids = load_ids(args.train_ids)
     test_ids = load_ids(args.test_ids)
-    avail_models = sorted(d.name for d in Path(args.primary_models_root).iterdir() if d.is_dir())
+    all_ids = sorted(set(train_ids + test_ids))
+    requested_models = [m.strip() for m in args.models.split(",") if m.strip()]
+    avail_models = discover_active_models(
+        Path(args.primary_models_root), Path(args.score_root), all_ids,
+        args.primary_fname, args.score_fname, requested_models,
+    )
+    if not avail_models:
+        raise SystemExit("No active diagnosis models with both predictions and judge scores.")
+    all_headers = BASE_HEADERS + build_model_headers(avail_models)
+    logger.info("Active models (%d): %s", len(avail_models), avail_models)
     args_dict = vars(args)
 
     def run_split(split, ids):
@@ -560,7 +599,7 @@ def main():
 
         f_csv = open(f_path, "w", newline="", encoding="utf-8")
         g_csv = open(g_path, "w", newline="", encoding="utf-8")
-        w_f = csv.DictWriter(f_csv, fieldnames=ALL_HEADERS, extrasaction="ignore")
+        w_f = csv.DictWriter(f_csv, fieldnames=all_headers, extrasaction="ignore")
         w_g = csv.DictWriter(g_csv, fieldnames=GROUP_HEADERS, extrasaction="ignore")
         w_f.writeheader()
         w_g.writeheader()

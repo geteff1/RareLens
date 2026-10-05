@@ -7,10 +7,10 @@ produces ensemble-averaged ranked predictions.
 
 Usage:
     python -m rare_diagnosis.training.infer_ranker \\
-        --input-dir /data/features \\
-        --model-dir rare_diagnosis/models/primary_aligned/models \\
+        --input-dir outputs/diagnosis_demo_primary/features \\
+        --model-dir outputs/diagnosis_demo_primary/model/models \\
         --config rare_diagnosis/training/best_hyperopt_config_primary.json \\
-        --out-dir /data/inference_output
+        --out-dir outputs/diagnosis_demo_primary/model/inference
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 META_COLS = {
     "split", "case_id", "stage", "orphacode", "label",
-    "diagnosis_name", "gt_matches_score_5",
+    "diagnosis_name", "gt_matches_score_5", "gt_positive_count",
     "has_positive_label", "case_entropy",
 }
 
@@ -60,36 +60,21 @@ def load_data(path: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def load_fold_models(model_dir: str) -> List:
-    """Load all XGBoost fold models from the model directory.
-
-    Supports two formats:
-      - xgboost_fold_*.json  (xgb.Booster)
-      - XGBoost_fold_*.pkl   (pickled XGBRanker, legacy)
-    """
-    import pickle
+    """Load all current-format XGBoost fold models from a directory."""
 
     model_path = Path(model_dir)
     models = []
 
-    # Try .json (Booster) first
     for p in sorted(model_path.glob("xgboost_fold_*.json")):
         booster = xgb.Booster()
         booster.load_model(str(p))
         models.append(booster)
         logger.info("Loaded: %s", p.name)
 
-    # Fall back to .pkl (XGBRanker)
-    if not models:
-        for p in sorted(model_path.glob("XGBoost_fold_*.pkl")):
-            with open(p, "rb") as f:
-                ranker = pickle.load(f)
-            models.append(ranker)
-            logger.info("Loaded: %s", p.name)
-
     if not models:
         raise FileNotFoundError(
             f"No XGBoost fold models found in {model_dir}. "
-            f"Expected xgboost_fold_*.json or XGBoost_fold_*.pkl"
+            "Expected xgboost_fold_*.json"
         )
 
     logger.info("Loaded %d fold models", len(models))
@@ -130,13 +115,14 @@ def calculate_metrics(predictions_df: pd.DataFrame, k_values: List[int] = None) 
 # ---------------------------------------------------------------------------
 
 def infer(args):
-    # Load config
-    feat_cols = None
+    # The config remains useful documentation for the training setup, but the
+    # exact dynamic feature schema is stored in each trained XGBoost model.
+    config_feat_cols = None
     if args.config and os.path.exists(args.config):
         with open(args.config, "r", encoding="utf-8") as f:
             config = json.load(f)
-        feat_cols = config.get("feature_names")
-        logger.info("Loaded config: %s (%d features)", args.config, len(feat_cols) if feat_cols else 0)
+        config_feat_cols = config.get("feature_names")
+        logger.info("Loaded config: %s", args.config)
 
     # Load data (try features.test.csv first, then features.csv)
     df = None
@@ -149,16 +135,24 @@ def infer(args):
     if df is None:
         raise FileNotFoundError(f"No feature CSV found in {args.input_dir}")
 
-    # Determine feature columns
-    if feat_cols:
-        available = set(df.columns)
-        feat_cols = [f for f in feat_cols if f in available]
-    else:
-        feat_cols = [c for c in df.columns if c not in META_COLS]
-    logger.info("  %d rows, %d features", len(df), len(feat_cols))
-
     # Load fold models
     models = load_fold_models(args.model_dir)
+
+    # Prefer the schema embedded in the trained model. Fall back to the config
+    # only for old model files that do not store feature names.
+    feat_cols = list(models[0].feature_names or config_feat_cols or [])
+    if not feat_cols:
+        feat_cols = [c for c in df.columns if c not in META_COLS]
+    for model in models[1:]:
+        if model.feature_names and list(model.feature_names) != feat_cols:
+            raise ValueError("Fold models contain inconsistent feature schemas")
+    missing = [c for c in feat_cols if c not in df.columns]
+    if missing:
+        raise ValueError(
+            "Feature CSV does not match the trained dynamic model schema; "
+            f"missing columns: {missing}"
+        )
+    logger.info("  %d rows, %d features", len(df), len(feat_cols))
 
     # Sort by case_id for group consistency
     df = df.sort_values("case_id").reset_index(drop=True)
@@ -167,15 +161,9 @@ def infer(args):
     # Ensemble prediction (average across folds)
     logger.info("Running inference with %d model(s)...", len(models))
     preds = np.zeros(len(df))
-    is_booster = isinstance(models[0], xgb.Booster)
-    if is_booster:
-        dmat = xgb.DMatrix(X)
+    dmat = xgb.DMatrix(X)
     for i, model in enumerate(models, 1):
-        if is_booster:
-            preds += model.predict(dmat)
-        else:
-            # XGBRanker (sklearn API)
-            preds += model.predict(X)
+        preds += model.predict(dmat)
         logger.info("  Model %d/%d predicted", i, len(models))
     preds /= len(models)
 

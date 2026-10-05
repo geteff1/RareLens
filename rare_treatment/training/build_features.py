@@ -10,9 +10,9 @@ Multi-GPU support: each GPU shard loads its own embedding + NLI model.
 
 Usage:
     python build_features.py \\
-        --plan_root /data/raw \\
-        --treatment_output_root /data/output \\
-        --treatment_score_root /data/scores \\
+        --case_root /data/cases \\
+        --llm_root /data/llm_outputs \\
+        --score_root /data/judge_scores \\
         --train_ids dataset/train_cases.json \\
         --test_ids dataset/test_cases.json \\
         --out_dir /data/features \\
@@ -63,6 +63,25 @@ from data_io import (
 DEFAULT_WEIGHT_STRATEGY = "coverage"
 DEFAULT_TOPK_MODELS = 3
 NLI_MODEL_NAME = "cross-encoder/nli-deberta-v3-large"
+
+
+def resolve_local_model_reference(model_name: str) -> str:
+    """Resolve a Hub model ID to its cached snapshot when offline mode is active."""
+    candidate = Path(model_name)
+    if candidate.exists():
+        return str(candidate.resolve())
+    offline = os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes"}
+    if not offline:
+        return model_name
+    try:
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(model_name, local_files_only=True)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Local Hugging Face snapshot is unavailable for {model_name!r}. "
+            "Pre-cache the model or disable offline mode."
+        ) from exc
 
 
 def list_subdirs(path: Path) -> List[str]:
@@ -309,12 +328,12 @@ def featurize_cases_on_one_gpu(
         semantic_model = SentenceTransformer(args_dict["semantic_model"], device=device)
         semantic_model.encode("warmup", show_progress_bar=False)
 
-        logger.info("[GPU %s] Loading NLI Model: %s", visible_gpu_id, NLI_MODEL_NAME)
-        nli_model = CrossEncoder(NLI_MODEL_NAME, device=device)
+        logger.info("[GPU %s] Loading NLI Model: %s", visible_gpu_id, args_dict["nli_model"])
+        nli_model = CrossEncoder(args_dict["nli_model"], device=device)
 
-    plan_root = Path(args_dict["plan_root"])
-    out_root = Path(args_dict["treatment_output_root"])
-    score_root = Path(args_dict["treatment_score_root"])
+    case_root = Path(args_dict["case_root"])
+    out_root = Path(args_dict["llm_root"])
+    score_root = Path(args_dict["score_root"])
 
     active_models = args_dict.get("active_models", [])
     weight_strategy = args_dict.get("weight_strategy", DEFAULT_WEIGHT_STRATEGY)
@@ -327,7 +346,7 @@ def featurize_cases_on_one_gpu(
     group_rows: List[Dict[str, Any]] = []
 
     for case_id in case_ids:
-        plan_path = plan_root / case_id / args_dict["plan_fname"]
+        plan_path = case_root / case_id / args_dict["plan_fname"]
         if not plan_path.exists():
             continue
         plan_obj = read_json(plan_path)
@@ -621,14 +640,14 @@ def featurize_cases_on_one_gpu(
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Step 2: Build Learning-to-Rank features for treatment reranking."
+        description="Build Learning-to-Rank features for treatment reranking."
     )
-    ap.add_argument("--plan_root", type=str, required=True,
+    ap.add_argument("--case_root", type=str, required=True,
                     help="Root dir of raw patient case folders (each contains treatment_plan.json)")
-    ap.add_argument("--treatment_output_root", type=str, required=True,
-                    help="Root dir of per-model LLM outputs (output/<model>/<case_id>/treatment_plan_output.json)")
-    ap.add_argument("--treatment_score_root", type=str, required=True,
-                    help="Root dir of Stage-3 evaluation scores (scores/<model>/<case_id>/treatment_score.json)")
+    ap.add_argument("--llm_root", type=str, required=True,
+                    help="Root dir of per-model LLM outputs (llm_outputs/<model>/<case_id>/treatment_plan_output.json)")
+    ap.add_argument("--score_root", type=str, required=True,
+                    help="Root dir of judge scores (judge_scores/<model>/<case_id>/treatment_score.json)")
     ap.add_argument("--train_ids", type=str, default="dataset/train_cases.json",
                     help="JSON file listing training case IDs")
     ap.add_argument("--test_ids", type=str, default="dataset/test_cases.json",
@@ -637,6 +656,8 @@ def main():
                     help="Output directory for feature CSVs")
     ap.add_argument("--semantic_model", type=str, default="pritamdeka/S-PubMedBert-MS-MARCO",
                     help="SentenceTransformer model for semantic similarity")
+    ap.add_argument("--nli_model", type=str, default=NLI_MODEL_NAME,
+                    help="CrossEncoder model for NLI entailment features")
     ap.add_argument("--plan_fname", type=str, default="treatment_plan.json")
     ap.add_argument("--output_fname", type=str, default="treatment_plan_output.json")
     ap.add_argument("--score_fname", type=str, default="treatment_score.json")
@@ -655,6 +676,9 @@ def main():
         help="If 1, set feat_eval_* to zero for test split (avoid test-time leakage).",
     )
     args = ap.parse_args()
+
+    args.semantic_model = resolve_local_model_reference(args.semantic_model)
+    args.nli_model = resolve_local_model_reference(args.nli_model)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -677,7 +701,7 @@ def main():
     visible_list = visible_list[:use_gpus]
 
     args_dict = vars(args)
-    args_dict["active_models"] = get_active_models(Path(args.treatment_output_root), Path(args.treatment_score_root))
+    args_dict["active_models"] = get_active_models(Path(args.llm_root), Path(args.score_root))
     if not args_dict["active_models"]:
         raise SystemExit("No overlapping model directories between output_root and score_root.")
     logger.info("Active models (%d): %s", len(args_dict['active_models']), sorted(args_dict['active_models']))
@@ -688,21 +712,30 @@ def main():
             return
         use_eval_aux_features = not (split_name == "test" and int(args.disable_eval_aux_on_test) == 1)
         logger.info("[%s] use_eval_aux_features=%d", split_name, int(use_eval_aux_features))
-        shards = [shard_list(ids, use_gpus, i) for i in range(use_gpus)]
-        ctx = mp.get_context("spawn")
-        with ctx.Pool(processes=use_gpus) as pool_mp:
-            jobs = []
-            for i in range(use_gpus):
-                jobs.append(pool_mp.apply_async(
-                    featurize_cases_on_one_gpu,
-                    kwds={
-                        "visible_gpu_id": visible_list[i],
-                        "case_ids": shards[i],
-                        "args_dict": args_dict,
-                        "use_eval_aux_features": use_eval_aux_features,
-                    }
-                ))
-            results = [j.get() for j in jobs]
+        if use_gpus == 0:
+            logger.info("[%s] Running serial CPU feature extraction", split_name)
+            results = [featurize_cases_on_one_gpu(
+                visible_gpu_id="",
+                case_ids=ids,
+                args_dict=args_dict,
+                use_eval_aux_features=use_eval_aux_features,
+            )]
+        else:
+            shards = [shard_list(ids, use_gpus, i) for i in range(use_gpus)]
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(processes=use_gpus) as pool_mp:
+                jobs = []
+                for i in range(use_gpus):
+                    jobs.append(pool_mp.apply_async(
+                        featurize_cases_on_one_gpu,
+                        kwds={
+                            "visible_gpu_id": visible_list[i],
+                            "case_ids": shards[i],
+                            "args_dict": args_dict,
+                            "use_eval_aux_features": use_eval_aux_features,
+                        }
+                    ))
+                results = [j.get() for j in jobs]
 
         all_rows, all_groups = [], []
         for rows, groups in results:

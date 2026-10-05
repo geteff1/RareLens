@@ -1,143 +1,215 @@
 # RareDiagnosis
 
 ## Overview
+RareDiagnosis generates diagnostic candidates with multiple LLMs and trains an XGBoost learning-to-rank ensemble for primary or follow-up visits.
 
-We provide the training pipeline for rare disease diagnosis ranking, supporting both primary consultation and follow-up visit stages. For methodological details, please refer to the paper.
-
-## Pipeline
-
+```text
+case data
+  -> multi-LLM diagnosis generation
+  -> optional local OrphaCode retrieval + gpt-5-nano disambiguation
+  -> external LLM-as-judge scores (method described in the paper)
+  -> feature engineering
+  -> five-fold XGBoost ranker
+  -> fold-averaged inference
 ```
-Step 0: RAG Cache (optional)   →  FAISS vector index for OrphaCode resolution
-Step 1: LLM Generation         →  per-model diagnosis outputs + OrphaCode mapping
-Step 2: Feature Engineering     →  features.{train,test}.csv (56+ features per candidate)
-Step 3: XGBoost Training        →  GroupKFold CV ranker (rank:ndcg)
+
+## Code Demo
+### 1. Configure LLM endpoints
+
+Configure `llm_config.json` following the format in `llm_config.example.json`, and replace the endpoint and key placeholders. Model generation and optional OrphaCode disambiguation read this file.
+
+### 2. Run a 10-case demo
+
+Run commands from the repository root.
+
+The Diagnosis ensemble uses the same 11 model tags for primary and follow-up:
+
+```text
+Claude-Haiku-4.5, DeepSeek-R1, Gemini-2.5-Flash, GPT-3.5-Turbo,
+GPT-4o-mini, GPT-5, o3-mini, Qwen3-14B, Qwen3-235B-Instruct,
+Qwen3-32B, Qwen3-8B
 ```
 
-## Quick Start
+Windows PowerShell — primary:
 
-Generate the LLM outputs first (Step 1), then build features and train the ranker.
-The per-model LLM outputs (`--llm-root`) and judge scores (`--score-root`, the
-ground truth) must both exist before running the commands below.
+```powershell
+.\rare_diagnosis\training\reproduce_diag.ps1 `
+  -VisitType primary `
+  -Python .\.venv\Scripts\python.exe `
+  -Models "Claude-Haiku-4.5,DeepSeek-R1,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B"
+```
+
+Windows PowerShell — follow-up:
+
+```powershell
+.\rare_diagnosis\training\reproduce_diag.ps1 `
+  -VisitType followup `
+  -Python .\.venv\Scripts\python.exe `
+  -Models "Claude-Haiku-4.5,DeepSeek-R1,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B"
+```
+
+macOS / Linux / WSL Bash — primary:
+
+Create the environment on that machine first; a `.venv` copied from Windows cannot run on macOS.
 
 ```bash
-# Primary stage
-bash rare_diagnosis/training/reproduce_diag.sh \
-    --python /path/to/python \
-    --visit-type primary \
-    --case-root /data/cases \
-    --score-root /data/scores \
-    --llm-root /data/llm_outputs \
-    --train-ids /data/splits/train.json \
-    --test-ids /data/splits/test.json
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 
-# Follow-up stage 
 bash rare_diagnosis/training/reproduce_diag.sh \
-    --visit-type followup \
-    --case-root /data/cases \
-    --score-root /data/scores \
-    --llm-root /data/llm_outputs \
-    --train-ids /data/splits/train.json \
-    --test-ids /data/splits/test.json
+  --visit-type primary \
+  --python .venv/bin/python \
+  --models Claude-Haiku-4.5,DeepSeek-R1,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B
 ```
 
-| Flag | Holds |
-| --- | --- |
-| `--case-root`  | raw cases (`<case>/primary_consultation.json`) |
-| `--llm-root`   | per-model LLM outputs (`<model>/<case>/…`) |
-| `--score-root` | per-model judge scores (GT) |
+macOS / Linux / WSL Bash — follow-up:
 
-> The judge scores (the ground truth used here) are produced by LLM-as-judge
-> evaluation following the method described in the paper. The scoring code is not
-> included in this repository — please refer to the paper to reproduce them.
+```bash
+bash rare_diagnosis/training/reproduce_diag.sh \
+  --visit-type followup \
+  --python .venv/bin/python \
+  --models Claude-Haiku-4.5,DeepSeek-R1,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B
+```
 
-The per-model output filename differs by stage and is handled automatically; override
-with `--primary-fname` / `--gt-fname` if needed. Run feature extraction on CPU with
-`--num-gpus 0` if GPU workers fail.
+The default demo deterministically selects 10 eligible cases with seed 42 and saves an 8-case training split and 2-case test split. 
 
-## Step-by-Step Usage
+Both scripts set Hugging Face/Transformers offline mode and therefore use the local model cache.
 
-### Step 1: LLM Generation
+## Step-by-Step Reproduction
+The commands below are the authoritative workflow for a user-provided cohort.
 
-[`generate_llm_outputs.py`](generate_llm_outputs.py) queries LLMs to produce top-5 diagnoses per case. Each diagnosis is optionally enriched with an OrphaCode via semantic retrieval ([`orphacode_rag.py`](orphacode_rag.py)).
+```text
+<CASE_ROOT>        case directories and diagnosis.json
+<SPLIT_ROOT>       train.json, test.json, and all.json
+<LLM_OUTPUT_ROOT>  per-model generated candidates
+<SCORE_ROOT>       externally generated per-model judge scores (not included)
+<FEATURE_ROOT>     generated feature CSVs
+<MODEL_ROOT>       trained fold models and predictions
+<RAG_VECTOR_CACHE_DIR>  optional prebuilt OrphaCode vector cache
+```
 
-The first two arguments are positional (`input_folder` `output_folder`), and `--model` runs **one** model per invocation — loop over models to produce the multi-LLM outputs.
+### Step 0: Prepare cases and splits
 
-The Diagnosis ensemble uses these 11 model/output-directory names:
+Primary cases require:
 
-`Claude-Haiku-4.5`, `DeepSeek-R1`, `Gemini-2.5-Flash`, `GPT-3.5-Turbo`,
-`GPT-4o-mini`, `GPT-5`, `o3-mini`, `Qwen3-14B`, `Qwen3-235B-Instruct`,
-`Qwen3-32B`, and `Qwen3-8B`.
+```text
+<CASE_ROOT>/<case_id>/primary_consultation.json
+<CASE_ROOT>/<case_id>/diagnosis.json
+```
+
+Follow-up cases additionally require:
+
+```text
+<CASE_ROOT>/<case_id>/follow_up_consultation.json
+```
+
+`<SPLIT_ROOT>/train.json` and `test.json` must be disjoint JSON arrays of case IDs. Create `<SPLIT_ROOT>/all.json` as their de-duplicated union. Generation uses `all.json`, while feature construction uses the train and test files separately. Use a case-level split so records from one patient cannot cross partitions. At least five training cases are required by the default five-fold training configuration.
+
+### Step 1: Generate diagnosis candidates
+
+Run once per model. `--model` may be a `model` value or tag in `llm_config.json`; use these same 11 public tags for both visit stages:
+
+```text
+Claude-Haiku-4.5, DeepSeek-R1, Gemini-2.5-Flash, GPT-3.5-Turbo,
+GPT-4o-mini, GPT-5, o3-mini, Qwen3-14B, Qwen3-235B-Instruct,
+Qwen3-32B, Qwen3-8B
+```
+
+Primary command:
 
 ```bash
 python -m rare_diagnosis.training.generate_llm_outputs \
-    /data/query /data/llm_outputs \
-    --model MODEL_NAME \
-    --config llm_config.json \
-    --visit-type primary
-
-# With OrphaCode RAG enrichment
-python -m rare_diagnosis.training.generate_llm_outputs \
-    /data/query /data/llm_outputs \
-    --model MODEL_NAME \
-    --config llm_config.json \
-    --visit-type primary \
-    --enable-orphacode-rag \
-    --rag-ontology-path rare_diagnosis/training/orphanet_hierarchy.json
+  <CASE_ROOT> <LLM_OUTPUT_ROOT> \
+  --model MODEL_TAG \
+  --config llm_config.json \
+  --case-ids <SPLIT_ROOT>/all.json \
+  --visit-type primary \
+  --enable-orphacode-rag \
+  --rag-ontology-path rare_diagnosis/training/orphanet_hierarchy.json \
+  --rag-vector-cache-dir <RAG_VECTOR_CACHE_DIR>
 ```
 
-Replace `MODEL_NAME` with each required ensemble identifier listed above. It
-must match either a `model` value or an entry in `tags` in `llm_config.json`.
-Run the command separately for each required visit stage. Do not mix primary
-and follow-up generation in the same output root because the generator's output
-filenames overlap.
-
-### Step 2: Feature Engineering
-
-[`build_features_primary.py`](build_features_primary.py) and [`build_features_followup.py`](build_features_followup.py) construct ranking features per candidate from multi-model outputs.
-
-> Downloads `pritamdeka/S-PubMedBert-MS-MARCO` (semantic features) from HuggingFace on
-> first run — see the main README's *Feature-engineering models* note for the mirror /
-> pre-cache and the `--num_gpus 0 --workers 2` CPU fallback if GPU workers crash.
+For follow-up reproduction, first generate primary outputs for the same model and IDs, then run:
 
 ```bash
-# Primary stage
+python -m rare_diagnosis.training.generate_llm_outputs \
+  <CASE_ROOT> <LLM_OUTPUT_ROOT> \
+  --model MODEL_TAG \
+  --config llm_config.json \
+  --case-ids <SPLIT_ROOT>/all.json \
+  --visit-type followup \
+  --enable-orphacode-rag \
+  --rag-ontology-path rare_diagnosis/training/orphanet_hierarchy.json \
+  --rag-vector-cache-dir <RAG_VECTOR_CACHE_DIR>
+```
+
+### Step 2: Provide judge scores
+
+The LLM-as-judge implementation and prompt are intentionally not included in this repository. Reproduce the evaluation procedure specified in the paper for every generated model and case, then provide its JSON output under the following contract:
+
+```text
+primary:  <SCORE_ROOT>/<MODEL_TAG>/<case_id>/primary_diagnosis_score.json
+follow-up:<SCORE_ROOT>/<MODEL_TAG>/<case_id>/followup_diagnosis_score.json
+```
+
+Conceptual placeholder only:
+
+```text
+for each model tag and case:
+    prediction = read generated diagnosis candidate
+    reference = read case diagnosis.json
+    score = paper_defined_llm_judge(prediction, reference)
+    write score to the matching path above
+```
+
+The score JSON must follow the fields and semantics described in the paper because feature construction consumes those scores as supervision. 
+
+### Step 3: Build features
+Primary:
+
+```bash
 python -m rare_diagnosis.training.build_features_primary \
-    --query_root /data/query \
-    --primary_models_root /data/llm_outputs \
-    --gt_root /data/scores \
-    --train_ids /data/splits/train.json \
-    --test_ids /data/splits/test.json \
-    --out_dir /data/features/primary
-
-# Follow-up stage (includes diagnostic test results)
-python -m rare_diagnosis.training.build_features_followup \
-    --query_root /data/query \
-    --primary_models_root /data/llm_outputs \
-    --gt_root /data/scores \
-    --train_ids /data/splits/train.json \
-    --test_ids /data/splits/test.json \
-    --out_dir /data/features/followup
+  --query_root <CASE_ROOT> \
+  --primary_models_root <LLM_OUTPUT_ROOT> \
+  --score_root <SCORE_ROOT> \
+  --models MODEL_A,MODEL_B \
+  --train_ids <SPLIT_ROOT>/train.json \
+  --test_ids <SPLIT_ROOT>/test.json \
+  --out_dir <FEATURE_ROOT>
 ```
 
-### Step 3: XGBoost Training
+Follow-up:
 
-[`train_ranker.py`](train_ranker.py) trains an XGBoost LTR model with GroupKFold (5-fold) cross-validation. Monotonicity constraints are auto-inferred from feature names.
+```bash
+python -m rare_diagnosis.training.build_features_followup \
+  --query_root <CASE_ROOT> \
+  --primary_models_root <LLM_OUTPUT_ROOT> \
+  --score_root <SCORE_ROOT> \
+  --models MODEL_A,MODEL_B \
+  --train_ids <SPLIT_ROOT>/train.json \
+  --test_ids <SPLIT_ROOT>/test.json \
+  --out_dir <FEATURE_ROOT>
+```
+
+### Step 4: Train the ranker
+
+Primary:
 
 ```bash
 python -m rare_diagnosis.training.train_ranker \
-    --input-dir /data/features/primary \
-    --config rare_diagnosis/training/best_hyperopt_config_primary.json \
-    --out-dir /data/models/primary \
-    --use-gpu
+  --input-dir <FEATURE_ROOT> \
+  --config rare_diagnosis/training/best_hyperopt_config_primary.json \
+  --out-dir <MODEL_ROOT>
 ```
 
-Standalone inference with trained models:
+For follow-up, replace the config with `best_hyperopt_config_followup.json`.
+
+### Step 5: Standalone inference
 
 ```bash
 python -m rare_diagnosis.training.infer_ranker \
-    --input-dir /data/features/primary \
-    --model-dir /data/models/primary/models \
-    --config rare_diagnosis/training/best_hyperopt_config_primary.json \
-    --out-dir /data/inference_output
+  --input-dir <FEATURE_ROOT> \
+  --model-dir <MODEL_ROOT>/models \
+  --config rare_diagnosis/training/best_hyperopt_config_primary.json \
+  --out-dir <MODEL_ROOT>/inference
 ```
-

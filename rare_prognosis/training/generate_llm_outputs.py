@@ -23,7 +23,8 @@ Usage:
     python generate_llm_outputs.py \\
         /path/to/input /path/to/output \\
         --model deepseek-v3 \\
-        --config configs/OAI_Config_List.json
+        --config configs/OAI_Config_List.json \\
+        --case-ids /path/to/all.json
 """
 from __future__ import annotations
 
@@ -157,7 +158,7 @@ def get_completion(
     prompt: str,
     model: str,
     *,
-    temperature: float = 0,
+    temperature: float = 0.0,
     max_retries: int = 10,
     delay: float = 2.0,
     stream: bool = False,
@@ -258,7 +259,7 @@ def process_case(
     client: OpenAI,
     model: str,
     *,
-    temperature: float = 0,
+    temperature: float = 0.0,
     max_retries: int = 10,
     stream: bool = False,
 ) -> bool:
@@ -340,6 +341,8 @@ def main():
     parser.add_argument("--config", default=None,
                         help="Path to JSON config list (config mode). "
                              "Each entry: {model, base_url, api_key, tags}")
+    parser.add_argument("--case-ids", default=None,
+                        help="Optional JSON array of case IDs to process")
     parser.add_argument("--num-workers", type=int, default=10,
                         help="Number of concurrent threads (1 = sequential)")
     parser.add_argument("--max-iterations", type=int, default=20,
@@ -373,13 +376,28 @@ def main():
     output_folder = os.path.join(args.output_folder, args.model)
     os.makedirs(output_folder, exist_ok=True)
 
+    selected_case_ids = None
+    if args.case_ids:
+        with open(args.case_ids, "r", encoding="utf-8") as f:
+            raw_case_ids = json.load(f)
+        if not isinstance(raw_case_ids, list):
+            logger.error("--case-ids must contain a JSON array.")
+            sys.exit(1)
+        selected_case_ids = {str(case_id) for case_id in raw_case_ids}
+
     # Gather all case directories
     all_cases = []
     for root, dirs, files in os.walk(args.input_folder):
+        case_id = os.path.basename(root)
         for fname in INPUT_FNAMES:
-            if fname in files:
+            if fname in files and (selected_case_ids is None or case_id in selected_case_ids):
                 all_cases.append(root)
                 break
+    all_cases.sort()
+
+    if not all_cases:
+        logger.warning("No eligible cases found under %s.", args.input_folder)
+        return
 
     worker_count = max(1, args.num_workers)
 

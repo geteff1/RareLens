@@ -2,125 +2,154 @@
 
 ## Overview
 
-We provide the training pipeline for treatment plan ranking. For methodological details, please refer to the paper.
+RareTreatment generates treatment candidates with multiple LLMs and trains a five-fold XGBoost learning-to-rank ensemble.
 
-## Pipeline
-
+```text
+case data
+  -> multi-LLM treatment generation
+  -> external LLM-as-judge scores (method described in the paper)
+  -> selected-case data preparation
+  -> feature engineering
+  -> five-fold XGBoost ranker
+  -> fold-averaged test predictions
 ```
-Step 1: LLM Generation       →  treatment_plan_output.json per model per case
-Step 2: Data Preparation     →  Organized directory structure for downstream steps
-Step 3: Feature Engineering  →  features_{train,test}.csv
-Step 4: Training + Inference →  XGBoost GroupKFold ranker → ensemble predictions
+
+## Code Demo
+
+### 1. Configure LLM endpoints
+
+Configure `llm_config.json` following the format in `llm_config.example.json`, and replace the endpoint and key placeholders. Model generation reads this file. 
+
+### 2. Run the 10-case demo
+
+Run commands from the repository root. The Treatment ensemble uses these 12 models:
+
+```text
+Claude-Haiku-4.5, DeepSeek-R1, DeepSeek-V3.2-exp, Gemini-2.5-Flash,
+GPT-3.5-Turbo, GPT-4o-mini, GPT-5, o3-mini, Qwen3-14B,
+Qwen3-235B-Instruct, Qwen3-32B, Qwen3-8B
 ```
 
-## Quick Start
+Windows PowerShell:
 
-Generate the LLM plans first (Step 1), then prepare data, build features, train,
-and infer. The per-model LLM plans (`--llm-root`) and judge scores
-(`--score-root`, the ground truth) must both exist before running the pipeline.
+```powershell
+.\rare_treatment\training\reproduce_treatment.ps1 `
+  -Python .\.venv\Scripts\python.exe `
+  -Models "Claude-Haiku-4.5,DeepSeek-R1,DeepSeek-V3.2-exp,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B"
+```
+
+macOS / Linux / WSL Bash:
+
+Create the virtual environment on that machine; a Windows `.venv` cannot run on macOS or Linux.
 
 ```bash
-bash rare_treatment/training/run_pipeline.sh \
-    --python /path/to/python \
-    --case-root /data/case_output \
-    --llm-root /data/treatment_llm \
-    --score-root /data/treatment_scores \
-    --train-ids /data/splits/train.json \
-    --test-ids /data/splits/test.json \
-    --n-splits 5
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+bash rare_treatment/training/reproduce_treatment.sh \
+  --python .venv/bin/python \
+  --models Claude-Haiku-4.5,DeepSeek-R1,DeepSeek-V3.2-exp,Gemini-2.5-Flash,GPT-3.5-Turbo,GPT-4o-mini,GPT-5,o3-mini,Qwen3-14B,Qwen3-235B-Instruct,Qwen3-32B,Qwen3-8B
 ```
 
-| Flag | Holds |
-| --- | --- |
-| `--case-root`        | raw cases (`<case>/treatment_plan.json`, flat or `1_raw_data/`) |
-| `--llm-root`  | per-model LLM plans (`<model>/<case>/treatment_plan_output.json`) |
-| `--score-root`       | per-model judge scores (`<model>/<case>/treatment_score.json`) |
+The demo selects 10 eligible `data_500` cases deterministically with seed 42 and writes an 8-case training split and a disjoint 2-case test split.
+Both scripts force Hugging Face, Transformers, and Datasets offline mode.
 
-> The judge scores (the ground truth used here) are produced by LLM-as-judge
-> evaluation following the method described in the paper. The scoring code is not
-> included in this repository — please refer to the paper to reproduce them.
 
-Without `--score-root`, scores are split from the legacy
-`<case>/5_treatment/llm_outputs.json` instead. Without `--train-ids/--test-ids`,
-all cases are used as both train and test (smoke mode). Hit@1/3/5 + MRR are printed
-by the training step. Use `--num-gpus 0` if GPU feature workers fail.
+## Step-by-Step Reproduction
 
-## Step-by-Step Usage
+The following workflow is for a user-provided cohort.
 
-### Step 1: LLM Generation
+```text
+<CASE_ROOT>        source case directories
+<SPLIT_ROOT>       train.json, test.json, and all.json
+<LLM_OUTPUT_ROOT>  generated per-model treatment plans
+<SCORE_ROOT>       externally generated per-model judge scores (not included)
+<FEATURE_ROOT>     generated feature CSVs
+<MODEL_ROOT>       trained fold models
+<RESULT_ROOT>      ranked test predictions
+```
 
-[`generate_llm_outputs.py`](generate_llm_outputs.py) calls LLMs to generate treatment recommendations per case. 
+### Step 0: Prepare cases and splits
 
-The Treatment ensemble uses these 12 model/output-directory identifiers:
+Every selected case requires:
 
-`Claude-Haiku-4.5`, `DeepSeek-R1`, `DeepSeek-V3.2-exp`,
-`Gemini-2.5-Flash`, `GPT-3.5-Turbo`, `GPT-4o-mini`, `GPT-5`, `o3-mini`,
-`Qwen3-14B`, `Qwen3-235B-Instruct`, `Qwen3-32B`, and `Qwen3-8B`.
+```text
+<CASE_ROOT>/<case_id>/treatment_plan.json
+<CASE_ROOT>/<case_id>/treatment_outcome.json
+```
+
+Optional reference material may be placed at:
+
+```text
+<CASE_ROOT>/<case_id>/treatment_knowledge.json
+```
+
+`train.json` and `test.json` must be disjoint JSON arrays of case IDs. `all.json` must be their de-duplicated union. At least five training cases are required by the default five-fold configuration.
+
+### Step 1: Generate treatment candidates
+
+Run once per model. `MODEL_TAG` may be a `model` value or an entry in `tags` in `llm_config.json`.
 
 ```bash
 python -m rare_treatment.training.generate_llm_outputs \
-    /data/case_output /data/treatment_llm \
-    --model MODEL_NAME \
-    --config llm_config.json
+  <CASE_ROOT> <LLM_OUTPUT_ROOT> \
+  --model MODEL_TAG \
+  --config llm_config.json \
+  --case-ids <SPLIT_ROOT>/all.json
 ```
 
-Replace `MODEL_NAME` with each required ensemble identifier listed above. It
-must match either a `model` value or an entry in `tags` in `llm_config.json`.
-The command writes
-`/data/treatment_llm/<model>/<case>/treatment_plan_output.json`.
+### Step 2: Provide judge scores
 
-### Step 2: Data Preparation
+The LLM-as-judge implementation and prompt are intentionally not included in this repository. Reproduce the evaluation procedure specified in the paper for every generated model and case, then provide its JSON output under this contract:
 
-[`prepare_data.py`](prepare_data.py) converts raw case outputs and LLM predictions into the directory structure expected by downstream scripts.
-
-```bash
-python -m rare_treatment.training.prepare_data \
-    --case-root /data/case_output \
-    --llm-root /data/treatment_llm \
-    --out-dir /data/prepared
+```text
+<SCORE_ROOT>/<MODEL_TAG>/<case_id>/treatment_score.json
 ```
 
-### Step 3: Feature Engineering
+Conceptual placeholder only:
 
-[`build_features.py`](build_features.py) constructs features from multi-model outputs.
+```text
+for each model tag and case:
+    prediction = read generated treatment plan
+    reference = read treatment_outcome.json and optional treatment_knowledge.json
+    score = paper_defined_llm_judge(prediction, reference)
+    write score to the matching path above
+```
 
-> Downloads `pritamdeka/S-PubMedBert-MS-MARCO` (embeddings) and
-> `cross-encoder/nli-deberta-v3-large` (NLI; needs `sentencepiece`) from HuggingFace on
-> first run — see the main README's *Feature-engineering models* note for the mirror /
-> pre-cache. If GPU feature workers crash, run on CPU with `--num-gpus 0`.
+The score JSON must follow the fields and semantics described in the paper because feature construction consumes those scores as supervision. 
+
+### Step 3: Build features
 
 ```bash
 python -m rare_treatment.training.build_features \
-    --plan_root /data/plan_root \
-    --treatment_output_root /data/treatment_output \
-    --treatment_score_root /data/treatment_score \
-    --train_ids /data/dataset/train_cases.json \
-    --test_ids /data/dataset/test_cases.json \
-    --out_dir /data/features \
-    --num_gpus 1
+  --case_root <CASE_ROOT> \
+  --llm_root <LLM_OUTPUT_ROOT> \
+  --score_root <SCORE_ROOT> \
+  --train_ids <SPLIT_ROOT>/train.json \
+  --test_ids <SPLIT_ROOT>/test.json \
+  --out_dir <FEATURE_ROOT> \
+  --num_gpus 0
 ```
 
-### Step 4: Training + Inference
-
-[`train_ranker.py`](train_ranker.py) trains an XGBoost LTR model with GroupKFold (5-fold) cross-validation.
+### Step 4: Train the ranker
 
 ```bash
 python -m rare_treatment.training.train_ranker \
-    --data-dir /data/features \
-    --out-dir /data/models \
-    --objective rank:ndcg \
-    --n-splits 5 \
-    --target-k 3 \
-    --drop-feature-groups stage3_eval \
-    --save-models
+  --data-dir <FEATURE_ROOT> \
+  --out-dir <MODEL_ROOT> \
+  --results-dir <RESULT_ROOT> \
+  --objective rank:ndcg \
+  --n-splits 5 \
+  --target-k 3 \
+  --save-models \
+  --force-cpu
 ```
 
-Standalone inference with trained models ([`infer_ranker.py`](infer_ranker.py)):
+### Step 5: Standalone inference
 
 ```bash
 python -m rare_treatment.training.infer_ranker \
-    --model-dir /data/models/models \
-    --test-csv /data/features/features_test.csv \
-    --out-dir /data/results
+  --model-dir <MODEL_ROOT>/models \
+  --test-csv <FEATURE_ROOT>/features_test.csv \
+  --out-dir <RESULT_ROOT>/inference
 ```
-

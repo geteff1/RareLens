@@ -8,10 +8,10 @@ For each task (overall_outcome / functional_status / symptom_burden):
 
 Usage:
     python -m rare_prognosis.training.build_features \\
-        --rareprognosis-root prog_out/RarePrognosis \\
-        --models-root prog_out \\
-        --train-ids prog_out/RarePrognosis/train_case_ids.json \\
-        --test-ids prog_out/RarePrognosis/test_case_ids.json \\
+        --results-root outputs/prognosis_demo/results \\
+        --models-root outputs/prognosis_demo/llm_outputs \\
+        --train-ids outputs/prognosis_demo/splits/train.json \\
+        --test-ids outputs/prognosis_demo/splits/test.json \\
         --out-dir rare_prognosis/training/features
 """
 
@@ -38,7 +38,7 @@ if str(THIS_DIR) not in sys.path:
 
 from data_io import (
     TASK_CONFIGS, DEFAULT_EXPL_KEYWORDS,
-    load_json, get_nested, normalize_label, list_model_dirs, load_s1_csv,
+    load_json, get_nested, normalize_label, list_model_dirs, load_result_csv,
 )
 from ensemble_utils import encode_features, extract_text_features
 
@@ -208,16 +208,18 @@ def build_task_features(
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Build prognosis stacking feature CSVs.")
-    p.add_argument("--rareprognosis-root", default="prog_out/RarePrognosis")
-    p.add_argument("--models-root", default="prog_out")
-    p.add_argument("--train-ids", default="prog_out/RarePrognosis/train_case_ids.json")
-    p.add_argument("--test-ids", default="prog_out/RarePrognosis/test_case_ids.json")
+    p.add_argument("--results-root", required=True,
+                   help="Directory containing <task>/result.csv files")
+    p.add_argument("--models-root", required=True,
+                   help="Root containing per-model LLM prognosis outputs")
+    p.add_argument("--train-ids", required=True)
+    p.add_argument("--test-ids", required=True)
     p.add_argument("--out-dir", default="rare_prognosis/training/features")
     p.add_argument("--task", choices=("overall_outcome", "functional_status", "symptom_burden", "all"), default="all")
     p.add_argument("--expl-keywords", nargs="*", default=DEFAULT_EXPL_KEYWORDS)
     args = p.parse_args()
 
-    rare_root = Path(args.rareprognosis_root)
+    results_root = Path(args.results_root)
     models_root = Path(args.models_root)
     out_dir = Path(args.out_dir)
     train_allow = set(load_json(Path(args.train_ids)) or [])
@@ -228,13 +230,13 @@ def main() -> None:
     tasks = list(TASK_CONFIGS) if args.task == "all" else [args.task]
     for i, task in enumerate(tasks, 1):
         cfg = TASK_CONFIGS[task]
-        s1_path = rare_root / cfg.s1_csv[0] / cfg.s1_csv[1]
-        if not s1_path.is_file():
-            raise SystemExit(f"[{task}] missing S1 csv: {s1_path}")
-        s1 = load_s1_csv(s1_path, task)
-        tr = [cid for cid in s1.train_ids if cid in train_allow]
-        te = [cid for cid in s1.test_ids if cid in test_allow]
-        gt = {cid: lbl for cid, lbl in s1.gt_by_id.items() if cid in train_allow or cid in test_allow}
+        result_path = results_root / cfg.result_csv[0] / cfg.result_csv[1]
+        if not result_path.is_file():
+            raise SystemExit(f"[{task}] missing result csv: {result_path}")
+        result = load_result_csv(result_path, task)
+        tr = [cid for cid in result.train_ids if cid in train_allow]
+        te = [cid for cid in result.test_ids if cid in test_allow]
+        gt = {cid: lbl for cid, lbl in result.gt_by_id.items() if cid in train_allow or cid in test_allow}
         logger.info("[%s] train=%d test=%d gt=%d", task, len(tr), len(te), len(gt))
         build_task_features(
             task=task,

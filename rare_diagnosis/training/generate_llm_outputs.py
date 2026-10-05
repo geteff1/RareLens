@@ -12,27 +12,24 @@ Supports two modes:
     (each with "model", "base_url", "api_key", optional "tags").
 
 Per model/case output files:
-  1) primary_consultation_output.json           (raw full payload)
-  2) most_likely_diagnosis_orphacode.json       (diagnosis section for feature building)
+  - primary: primary_consultation_output.json and
+    most_likely_diagnosis_orphacode.json
+  - followup: followup_consultation_output.json and
+    followup_diagnosis_orphacode.json
 
 Usage:
-    # Direct API mode (e.g., Qwen via DashScope)
+    # Config-file mode on selected demo cases
     python -m rare_diagnosis.training.generate_llm_outputs \\
-        /path/to/input /path/to/output \\
-        --model qwen3-32b \\
-        --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 \\
-        --api-key YOUR_KEY
+        data_500 outputs/diagnosis_demo_primary/llm_outputs \\
+        --model GPT-5 \\
+        --config llm_config.json \\
+        --case-ids outputs/diagnosis_demo_primary/splits/all.json
 
-    # Config file mode (e.g., Claude / GPT / DeepSeek)
+    # Follow-up stage
     python -m rare_diagnosis.training.generate_llm_outputs \\
-        /path/to/input /path/to/output \\
-        --model deepseek-v3 \\
-        --config configs/OAI_Config_List.json
-
-    # Follow-up stage (includes diagnostic test results)
-    python -m rare_diagnosis.training.generate_llm_outputs \\
-        /path/to/input /path/to/output \\
-        --model gpt-5 --config configs/OAI_Config_List.json \\
+        data_500 outputs/diagnosis_demo_followup/llm_outputs \\
+        --model GPT-5 --config llm_config.json \\
+        --case-ids outputs/diagnosis_demo_followup/splits/all.json \\
         --visit-type followup
 """
 from __future__ import annotations
@@ -210,12 +207,34 @@ def load_model_config(config_path: str, model_tag: str) -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         config_list = json.load(f)
 
-    for cfg in config_list:
-        if model_tag in cfg.get("tags", []):
-            return cfg
-    for cfg in config_list:
-        if cfg.get("model") == model_tag:
-            return cfg
+    selected = next(
+        (cfg for cfg in config_list if model_tag in cfg.get("tags", [])),
+        None,
+    )
+    if selected is None:
+        selected = next(
+            (cfg for cfg in config_list if cfg.get("model") == model_tag),
+            None,
+        )
+    if selected is not None:
+        selected = dict(selected)
+        credential_tag = selected.get("credentials_from")
+        if credential_tag:
+            source = next(
+                (
+                    cfg for cfg in config_list
+                    if credential_tag == cfg.get("model")
+                    or credential_tag in cfg.get("tags", [])
+                ),
+                None,
+            )
+            if source is None:
+                raise ValueError(
+                    f"Credential source '{credential_tag}' not found in {config_path}."
+                )
+            selected.setdefault("base_url", source.get("base_url"))
+            selected.setdefault("api_key", source.get("api_key"))
+        return selected
 
     raise ValueError(f"Model '{model_tag}' not found in {config_path}.")
 
@@ -227,8 +246,7 @@ def get_completion(
     prompt: str,
     model: str,
     *,
-    temperature: float = 0,
-    max_tokens: int = 4096,
+    temperature: float = 0.0,
     max_retries: int = 10,
     delay: float = 2.0,
     stream: bool = False,
@@ -249,7 +267,6 @@ def get_completion(
                 "model": model,
                 "messages": messages,
                 "temperature": temperature,
-                "max_tokens": max_tokens,
             }
 
             # Qwen3 models need enable_thinking=False (unless they are thinking models)
@@ -318,8 +335,7 @@ def process_case(
     model: str,
     *,
     visit_type: str = "primary",
-    temperature: float = 0,
-    max_tokens: int = 4096,
+    temperature: float = 0.0,
     max_retries: int = 10,
     stream: bool = False,
     dry_run: bool = False,
@@ -327,14 +343,16 @@ def process_case(
     rag_client: OpenAI | None = None,
     rag_ontology_path: str = "",
     rag_embedding_model: str = "",
+    rag_vector_cache_dir: str = "",
     rag_top_k: int = 5,
 ) -> bool:
     relative_path = os.path.relpath(case_path, input_base)
     output_case_path = os.path.join(output_base, relative_path)
     os.makedirs(output_case_path, exist_ok=True)
 
-    raw_output_path = os.path.join(output_case_path, "primary_consultation_output.json")
-    diag_output_path = os.path.join(output_case_path, "most_likely_diagnosis_orphacode.json")
+    raw_fname, diag_fname = output_filenames(visit_type)
+    raw_output_path = os.path.join(output_case_path, raw_fname)
+    diag_output_path = os.path.join(output_case_path, diag_fname)
 
     # Skip if both outputs already exist
     if os.path.exists(raw_output_path) and os.path.exists(diag_output_path):
@@ -372,7 +390,6 @@ def process_case(
     response = get_completion(
         client, full_prompt, model,
         temperature=temperature,
-        max_tokens=max_tokens,
         max_retries=max_retries,
         stream=stream,
     )
@@ -397,6 +414,7 @@ def process_case(
                 ontology_path=rag_ontology_path,
                 embedding_model_name=rag_embedding_model,
                 llm_client=rag_client,
+                vector_cache_dir=rag_vector_cache_dir,
                 retrieve_top_k=rag_top_k,
             )
             parsed["most_likely_diagnosis"] = enriched
@@ -416,14 +434,22 @@ def process_case(
     return True
 
 
-def collect_pending_cases(all_cases, input_folder, output_folder):
+def output_filenames(visit_type: str) -> tuple[str, str]:
+    """Return stage-specific output names so primary and follow-up never collide."""
+    if visit_type == "followup":
+        return "followup_consultation_output.json", "followup_diagnosis_orphacode.json"
+    return "primary_consultation_output.json", "most_likely_diagnosis_orphacode.json"
+
+
+def collect_pending_cases(all_cases, input_folder, output_folder, visit_type):
     """Return case paths still missing output files."""
     pending = []
     for case_path in all_cases:
         relative_path = os.path.relpath(case_path, input_folder)
         output_case_path = os.path.join(output_folder, relative_path)
-        raw_path = os.path.join(output_case_path, "primary_consultation_output.json")
-        diag_path = os.path.join(output_case_path, "most_likely_diagnosis_orphacode.json")
+        raw_fname, diag_fname = output_filenames(visit_type)
+        raw_path = os.path.join(output_case_path, raw_fname)
+        diag_path = os.path.join(output_case_path, diag_fname)
         if not (os.path.exists(raw_path) and os.path.exists(diag_path)):
             pending.append(case_path)
     return pending
@@ -437,8 +463,8 @@ def main():
     )
     parser.add_argument("input_folder", help="Input folder with case dirs containing primary_consultation.json")
     parser.add_argument("output_folder", help="Output folder where results will be saved")
-    parser.add_argument("--model", default="qwen3-32b",
-                        help="Model name/tag (e.g., qwen3-32b, gpt-5, claude-haiku-4-5-20251001, deepseek-r1)")
+    parser.add_argument("--model", required=True,
+                        help="Model name/tag (for example GPT-5 or Qwen3-32B)")
     parser.add_argument("--visit-type", choices=("primary", "followup"), default="primary",
                         help="Visit stage: primary (default) or followup")
     parser.add_argument("--base-url", default=None,
@@ -448,13 +474,14 @@ def main():
     parser.add_argument("--config", default=None,
                         help="Path to JSON config list (config mode). "
                              "Each entry: {model, base_url, api_key, tags}")
+    parser.add_argument("--case-ids", default=None,
+                        help="Optional JSON array of case IDs to process")
     parser.add_argument("--num-workers", type=int, default=10,
                         help="Number of concurrent threads (1 = sequential)")
     parser.add_argument("--max-iterations", type=int, default=20,
                         help="Max retry iterations for unfinished cases")
     parser.add_argument("--max-retries", type=int, default=10,
                         help="Max retries per LLM call")
-    parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--stream", action="store_true",
                         help="Use streaming API (needed for some models)")
@@ -469,6 +496,8 @@ def main():
                         help="LLM model for RAG disambiguation")
     parser.add_argument("--rag-embedding-model", default="BAAI/bge-base-en-v1.5",
                         help="Embedding model for RAG retrieval")
+    parser.add_argument("--rag-vector-cache-dir", default="rare_diagnosis/orphacode_rag_cache",
+                        help="Prebuilt OrphaCode vector-cache directory")
     parser.add_argument("--rag-top-k", type=int, default=5,
                         help="Top-K candidates for RAG retrieval")
     args = parser.parse_args()
@@ -494,24 +523,44 @@ def main():
             logger.error("Provide either --config or both --base-url and --api-key.")
             sys.exit(1)
 
-    # RAG LLM client (reuse same credentials, different model for disambiguation)
+    # Resolve the RAG model independently. This avoids sending gpt-5-nano to a
+    # non-OpenAI generation endpoint when another provider supplies candidates.
     rag_client = None
-    if args.enable_orphacode_rag:
+    if args.enable_orphacode_rag and not args.dry_run:
+        if args.config:
+            rag_cfg = load_model_config(args.config, args.rag_model)
+            rag_base_url = rag_cfg.get("base_url")
+            rag_api_key = rag_cfg.get("api_key")
+            rag_model_name = rag_cfg.get("model", args.rag_model)
+        else:
+            rag_base_url = args.base_url
+            rag_api_key = args.api_key
+            rag_model_name = args.rag_model
         rag_client = OpenAI(
-            base_url=client.base_url,
-            api_key=client.api_key,
+            base_url=rag_base_url,
+            api_key=rag_api_key,
         )
-        # Attach model name for _call_llm_json to use
-        rag_client._rag_model = args.rag_model  # type: ignore[attr-defined]
+        rag_client._rag_model = rag_model_name  # type: ignore[attr-defined]
 
     output_folder = os.path.join(args.output_folder, args.model)
     os.makedirs(output_folder, exist_ok=True)
 
-    # Gather all case directories
+    selected_case_ids = None
+    if args.case_ids:
+        with open(args.case_ids, "r", encoding="utf-8") as f:
+            selected_case_ids = {str(x) for x in json.load(f)}
+
+    # Gather only cases eligible for the requested stage.
     all_cases = []
     for root, dirs, files in os.walk(args.input_folder):
-        if "primary_consultation.json" in files:
+        required_input = (
+            "follow_up_consultation.json" if args.visit_type == "followup"
+            else "primary_consultation.json"
+        )
+        case_id = os.path.basename(root)
+        if required_input in files and (selected_case_ids is None or case_id in selected_case_ids):
             all_cases.append(root)
+    all_cases.sort()
 
     if not all_cases:
         logger.warning("No cases found under %s", args.input_folder)
@@ -520,7 +569,9 @@ def main():
     worker_count = max(1, args.num_workers)
 
     for iteration in range(1, args.max_iterations + 1):
-        cases_to_process = collect_pending_cases(all_cases, args.input_folder, output_folder)
+        cases_to_process = collect_pending_cases(
+            all_cases, args.input_folder, output_folder, args.visit_type
+        )
         total_cases = len(cases_to_process)
 
         if total_cases == 0:
@@ -537,7 +588,6 @@ def main():
                         client, model_name,
                         visit_type=args.visit_type,
                         temperature=args.temperature,
-                        max_tokens=args.max_tokens,
                         max_retries=args.max_retries,
                         stream=args.stream,
                         dry_run=args.dry_run,
@@ -545,6 +595,7 @@ def main():
                         rag_client=rag_client,
                         rag_ontology_path=args.rag_ontology_path,
                         rag_embedding_model=args.rag_embedding_model,
+                        rag_vector_cache_dir=args.rag_vector_cache_dir,
                         rag_top_k=args.rag_top_k,
                     )
                     pbar.update(1)
@@ -558,7 +609,6 @@ def main():
                             client, model_name,
                             visit_type=args.visit_type,
                             temperature=args.temperature,
-                            max_tokens=args.max_tokens,
                             max_retries=args.max_retries,
                             stream=args.stream,
                             dry_run=args.dry_run,
@@ -566,6 +616,7 @@ def main():
                             rag_client=rag_client,
                             rag_ontology_path=args.rag_ontology_path,
                             rag_embedding_model=args.rag_embedding_model,
+                            rag_vector_cache_dir=args.rag_vector_cache_dir,
                             rag_top_k=args.rag_top_k,
                         )
                         future_to_case[future] = case_path
@@ -579,7 +630,13 @@ def main():
                                          os.path.relpath(case_path, args.input_folder), e)
                         pbar.update(1)
 
-        remaining = collect_pending_cases(all_cases, args.input_folder, output_folder)
+        if args.dry_run:
+            logger.info("Dry run complete; no output files were written.")
+            return
+
+        remaining = collect_pending_cases(
+            all_cases, args.input_folder, output_folder, args.visit_type
+        )
         if not remaining:
             logger.info("All cases have been processed.")
             return
